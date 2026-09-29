@@ -749,6 +749,7 @@ bool MmxRendererDraw(uint32_t *out, MmxRenderView view, bool hud) {
   unsigned piece_count = frame.expand && g_mmx_render_asset_repairs ? frame.expanded_count : frame.piece_count;
   const uint8_t *zero = stage || zero_menu || zero_title ? MmxZeroPose(frame.ram, &frame_zero) : NULL;
   const uint8_t *blade = stage && zero ? MmxZeroBlade(&frame_zero) : NULL;
+  const uint8_t *charge = stage && zero ? MmxZeroChargePose(&frame_zero) : NULL;
   Piece waiting[128];
   unsigned waiting_count = stage && g_mmx_render_asset_repairs ?
       fortress_waiting_pieces(waiting, pieces, piece_count) : 0;
@@ -815,7 +816,7 @@ bool MmxRendererDraw(uint32_t *out, MmxRenderView view, bool hud) {
       bool zero_body = zero && (s.object == 0xba8 || menu_body);
       bool swap_actor = swapping && (s.object == 0xba8 || s.object == 0xc38 ||
           s.object == 0xc58 || s.object == 0xc78 || s.object == 0xc98);
-      bool zero_charge = zero && stage && s.object == 0xc98 && s.animation == 0x71;
+      bool zero_charge = zero && stage && MmxZeroNativeChargeObject(s.object,frame.ram[s.object+10]);
       bool zero_armor = zero && (s.object == 0xc38 || s.object == 0xc58 || s.object == 0xc78 ||
           (zero_menu && (s.object == 0x1928 || s.object == 0x1948 || s.object == 0x1968)));
       bool oam_match = false;
@@ -835,6 +836,7 @@ bool MmxRendererDraw(uint32_t *out, MmxRenderView view, bool hud) {
           (asset->live_tiles ? s.attr & 255 : 0) : s.attr;
       if (asset && asset->live_colors) attr = (attr & ~0x0e00u) | (s.attr & 0x0e00u);
       if (zero_armor || swap_actor) continue;
+      if (zero_charge && MmxZeroHasChargeArt() && !frame.ram[0xbdb]) continue;
       if (zero_body && !oam_match && !(frame.expand && frame.ram[s.object + 14] &&
           (s.x + s.size <= 0 || s.x >= 256))) continue;
       if (zero_body) {
@@ -861,7 +863,8 @@ bool MmxRendererDraw(uint32_t *out, MmxRenderView view, bool hud) {
                 if (sting) {
                   objects[dx] = (uint16_t)((z & ~255u) | (144 + sting_shade[pixel - 16]));
                   object_colors[dx] = -1; /* Live CGRAM already includes fades. */
-                } else object_colors[dx] = colors[pixel];
+                } else object_colors[dx] = !menu_body && pixel >= 16 && pixel < 32 ?
+                    MmxZeroBodyColors(&frame_zero)[pixel - 16] : colors[pixel];
               }
             }
           }
@@ -903,6 +906,19 @@ bool MmxRendererDraw(uint32_t *out, MmxRenderView view, bool hud) {
       bool anchored = stage && hud && sy < 96 && (slot < 16 || (bar_count >= 4 && slot >= bar_first && slot < bar_first + bar_count));
       if (anchored) { if (x < 25) x -= view.extra; else if (x >= 216) x += view.extra; }
       sprite(&p, r, x, sy, attr, size, y, view, objects, false, NULL, 0, object_colors, false, zero_icon, false);
+    }
+    if (charge && zero_drawn[0] && !swapping) {
+      int zx=(int16_t)(word(frame.ram,0xbad)-word(frame.ram,0x1e4d));
+      int zy=(int16_t)(word(frame.ram,0xbb0)-word(frame.ram,0x1e50))-8;
+      int row=y-zy+64;
+      unsigned palette=frame_zero.charge>=81 && frame_zero.charge<201 ? 32 : 0;
+      if(row>=0 && row<MMX_ZERO_HEIGHT) for(int col=0;col<MMX_ZERO_WIDTH;++col) {
+        unsigned pixel=charge[row*MMX_ZERO_WIDTH+col];
+        int dx=zx+((frame.ram[0xbb9]&64)?63-col:col-64)+view.extra;
+        if(pixel && dx>=0 && dx<view.width) {
+          objects[dx]=(uint16_t)(0xe680|pixel); object_colors[dx]=MmxZeroColors()[palette+pixel];
+        }
+      }
     }
     if (swapping) {
       unsigned pose = MmxZeroSwapPose(&frame_zero);

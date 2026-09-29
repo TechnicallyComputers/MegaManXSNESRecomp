@@ -97,7 +97,7 @@ static void activate(void) {
   RecompLauncherCModResource resource = {0};
   if (!provider || !provider->feature_resource_get ||
       !provider->feature_resource_get(provider->ctx,"megaman-x.character.zero","zero",0,&resource) || !resource.path[0]) return;
-  if (!snesrecomp_exe_dir_path("cache/mmx-source/x3-zero-v6.bin",path,sizeof(path))) return;
+  if (!snesrecomp_exe_dir_path("cache/mmx-source/x3-zero-v7.bin",path,sizeof(path))) return;
   char error[512];
   if (!MmxSourceAssetsBuild(resource.path,3,1,path,error,sizeof(error))) {
     fprintf(stderr,"[mmx-source] %s\n",error);

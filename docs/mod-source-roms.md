@@ -16,7 +16,7 @@ Supported X3 USA normalized SHA-256:
 `65b03268afac296330e8ff8d60dd0825879e13ed658b37713c034a3bd074f1d7`.
 
 `src/mmx_source_assets.cpp` repeats validation and extracts Zero assets natively
-from the selected ROM, atomically publishing `cache/mmx-source/x3-zero-v6.bin`
+from the selected ROM, atomically publishing `cache/mmx-source/x3-zero-v7.bin`
 beside the executable. Failed validation leaves the previous cache untouched.
 Activation always requires the selected ROM; it never falls back to developer
 assets. Runtime extraction requires no Python or additional download.
