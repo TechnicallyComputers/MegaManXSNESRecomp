@@ -44,5 +44,11 @@ seat. Single-player rendering is unchanged.
 
 Full, partial, empty and health-only renderer captures were inspected in
 4:3 and 16:9. A separate prefilled preview executable is in
-`build-hud-preview/MegaManXSNESRecomp-hud-preview-private/`. Slot 01 is a
+`build-hud-preview/MegaManXSNESRecomp-hud-preview-v2-private/`. Slot 01 is a
 HUD review checkpoint; the existing player build and its saves are intact.
+
+The second preview replaces the detached footer corners with a mirrored
+cap from the same meter frame. Upright character/weapon symbols are
+composited inside that continuous frame using their original pixels and
+palettes. Native Shotgun Ice and Fire Wave icons were also inspected.
+Owner visual acceptance remains pending.

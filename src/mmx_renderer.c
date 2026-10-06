@@ -1210,6 +1210,37 @@ static void coop_meter_row(const Ppu *ppu,const Raster *r,int y,MmxRenderView vi
         objects,false,art,tile,colors,true,false,false);
   }
 }
+static void coop_inverted_badge_row(const Ppu *ppu,const Raster *r,int y,MmxRenderView view,
+                                    uint16_t *objects,int *colors,int x,int icon_y,unsigned palette,
+                                    const MmxSpriteAsset *frame_art,const MmxSpriteAsset *icon_art,
+                                    const MmxWeaponPose *icon,bool zero) {
+  /* Use the meter's own frame/palette for the top cap. Replace only the
+   * upright symbol panel, leaving its sides continuous with the meter. */
+  sprite(ppu,r,x,icon_y,0xb086|(palette<<9),16,y,view,objects,false,
+      frame_art,0x86,colors,true,false,false);
+  int row=y-icon_y;
+  if(row<2 || row>13) return;
+  for(unsigned col=2;col<14;++col) {
+    if((row==2 || row==13) && (col==2 || col==13)) continue;
+    int dx=x+(int)col+view.extra;
+    if(dx<0 || dx>=view.width) continue;
+    int color=zero?MmxZeroHudColor(col,(unsigned)row):-1;
+    if(color<0) {
+      unsigned tile=palette==2?0x86:0x20;
+      unsigned number=(((tile>>4)+(unsigned)row/8)<<4)|((tile&15)+col/8);
+      unsigned pixel;
+      if(icon) pixel=icon->pixels[row*16+col];
+      else if(icon_art && !icon_art->live_tiles) {
+        const uint8_t *bits=icon_art->tiles+number*32+(row&7)*2;
+        unsigned shift=7-(col&7);
+        pixel=((bits[0]>>shift)&1)|(((bits[1]>>shift)&1)<<1)|
+            (((bits[16]>>shift)&1)<<2)|(((bits[17]>>shift)&1)<<3);
+      } else pixel=tile_pixel(r->vram,(ppu->obsel&7)*8192+number*16,col&7,row&7,4);
+      color=frame_art?frame_art->colors[pixel]:r->palette[128+palette*16+pixel];
+    }
+    objects[dx]=0xe6a1;colors[dx]=color;
+  }
+}
 static void coop_hud_row(const Ppu *ppu,const Raster *r,int y,MmxRenderView view,bool anchored,
                          uint16_t *objects,int *colors) {
   for(unsigned seat=0;seat<2;++seat) {
@@ -1219,8 +1250,8 @@ static void coop_hud_row(const Ppu *ppu,const Raster *r,int y,MmxRenderView view
     int x=8-(anchored?view.extra:0),icon_y=inverted?100:80;
     unsigned hp=player->status==MMX_COOP_FALLEN?0:player->body[0x27]&127;
     coop_meter_row(ppu,r,y,view,objects,colors,x,hp,frame.ram[0x1f9a],2,NULL,icon_y,inverted);
-    sprite(ppu,r,x,icon_y,0x3486,16,y,view,objects,false,NULL,0,colors,true,
-        player->character==MMX_COOP_ZERO,false);
+    if(inverted) coop_inverted_badge_row(ppu,r,y,view,objects,colors,x,icon_y,2,NULL,NULL,NULL,true);
+    else sprite(ppu,r,x,icon_y,0x3486,16,y,view,objects,false,NULL,0,colors,true,false,false);
     unsigned page=player->weapons.page;
     unsigned weapon=page?player->weapons.weapon:player->body[0x33]/2;
     if(!weapon || weapon>8) continue; /* Keep this seat's reserved blank column. */
@@ -1230,7 +1261,10 @@ static void coop_hud_row(const Ppu *ppu,const Raster *r,int y,MmxRenderView view
     MmxSpriteAsset bar={0};bar.live_tiles=true;
     if(palette) memcpy(bar.colors,palette,sizeof(bar.colors));
     coop_meter_row(ppu,r,y,view,objects,colors,x+16,energy,28,3,palette?&bar:NULL,icon_y,inverted);
-    if(!page) {
+    if(inverted) {
+      coop_inverted_badge_row(ppu,r,y,view,objects,colors,x+16,icon_y,3,palette?&bar:NULL,
+          native,page?MmxWeaponsHudIcon(page,weapon):NULL,false);
+    } else if(!page) {
       sprite(ppu,r,x+16,icon_y,0x3620,16,y,view,objects,false,native,0x20,colors,true,false,false);
     } else {
       const MmxWeaponPose *icon=MmxWeaponsHudIcon(page,weapon);int row=y-icon_y;
