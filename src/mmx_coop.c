@@ -902,10 +902,10 @@ static bool lift_elevator(unsigned d) {
    * Storm Eagle's E-tank elevator top ($59) and its column ($5A, 83 px
    * below), Flame Mammoth's scrap blocks dropped onto the conveyor
    * ($2A, from $87:9C7B/9D89), Armored Armadillo's minecart ($2B), and
-   * Kuwanger's red moving platforms ($3F). */
+   * Kuwanger's red moving platforms ($3F), and D-Rex's lower body ($62). */
   if(d<0xe68 || d>=0x1228 || (d-0xe68)%64 || !g_ram[d]) return false;
   unsigned c=g_ram[d+10];
-  return c==0x59 || c==0x5a || c==0x2a || c==0x2b || c==0x3f;
+  return c==0x59 || c==0x5a || c==0x2a || c==0x2b || c==0x3f || c==0x62;
 }
 static void laser_reset(void);
 static void lift_reset(void) {
@@ -962,7 +962,7 @@ static void kuwanger_lift_hook(CpuState *cpu,uint32_t pc) {
 static void kuwanger_carry_hook(CpuState *cpu,uint32_t pc) {
   unsigned d=cpu->D;
   if(!enabled || !state.initialized || d<0xe68 || d>=0x1228 || (d-0xe68)%64 ||
-      !g_ram[d] || (g_ram[d+10]!=0x3d && g_ram[d+10]!=0x3f)) return;
+      !g_ram[d] || (g_ram[d+10]!=0x3d && g_ram[d+10]!=0x3f && g_ram[d+10]!=0x62)) return;
   if((pc&65535)==0xc715) {
     if(elevator_move.pass) return;
     unsigned riders=g_ram[d+0x3f]&3;
@@ -1071,7 +1071,7 @@ static void lift_rtl_hook(CpuState *cpu,uint32_t pc) {
   }
   bool second_rides=g_ram[d+0x2c]&1;
   uint8_t combined=(uint8_t)(lift.first_2c|g_ram[d+0x2c]);
-  if(g_ram[d+10]==0x3f)
+  if(g_ram[d+10]==0x3f || g_ram[d+10]==0x62)
     g_ram[d+0x3f]=(uint8_t)(((lift.first_2c&1)?1u<<lift.first:0)|
         (second_rides?1u<<(lift.first^1):0));
   if(g_ram[d+10]==0x2b) {
@@ -1418,7 +1418,7 @@ static void pickup_hook(CpuState *cpu,uint32_t pc) {
  * weapon combat, Zero and co-op state, renderer pieces), so every object
  * still advances once. Couch co-op only for objects: online views already
  * project the nearest player for AI. */
-enum { GHOST_SHOTS=1, GHOST_OBJECT, GHOST_CURRENT };
+enum { GHOST_SHOTS=1, GHOST_OBJECT, GHOST_CURRENT, GHOST_EAGLE_WIND, GHOST_DREX_CONTACT };
 static struct {
   uint8_t pass,kind,p,db;uint16_t a,x,y,s,d;uint32_t resume;
   uint8_t body[0x90];
@@ -1537,6 +1537,38 @@ static void object_ghost_hook(CpuState *cpu,uint32_t pc) {
       (word(g_ram+0xbad)!=object_watch.x || word(g_ram+0xbb0)!=object_watch.y))
     diagnostic_event(g_ram,cpu,pc,"body-moved");
   object_watch.armed=false;
+}
+/* Eagle's wind state directly offsets BA8 by two pixels. Replay only its
+ * height/direction/position check ($87:DAC4..DB0E), before the attack timer
+ * and animation advance. The boss itself must remain a single world actor.
+ * This also works when independent views project a different world seat. */
+static void eagle_wind_hook(CpuState *cpu,uint32_t pc) {
+  if(!enabled || !state.initialized) return;
+  if((pc&65535)==0xdb0e) {
+    if(shot_ghost.pass==1 && shot_ghost.kind==GHOST_EAGLE_WIND) shot_ghost_end(cpu,pc);
+    return;
+  }
+  if(shot_ghost.pass==2 && shot_ghost.kind==GHOST_EAGLE_WIND) {shot_ghost.pass=0;return;}
+  unsigned d=cpu->D;
+  if(shot_ghost.pass || state.menu_owner || state.scene_owner || state.stage_pending ||
+      g_ram[0xd3]!=4 || !ghost_partner_ready() || d<0xe68 || d>=0x1228 ||
+      (d-0xe68)%64 || !g_ram[d] || g_ram[d+10]!=0x52) return;
+  shot_ghost_begin(cpu,GHOST_EAGLE_WIND,pc&0xffffff);
+}
+/* D-Rex's extra body-contact flags follow its ordinary solid query. Keep
+ * those flags private to each body too, without replaying its boss AI. */
+static void drex_contact_hook(CpuState *cpu,uint32_t pc) {
+  if(!enabled || !state.initialized) return;
+  if((pc&65535)==0xc35f) {
+    if(shot_ghost.pass==1 && shot_ghost.kind==GHOST_DREX_CONTACT) shot_ghost_end(cpu,pc);
+    return;
+  }
+  if(shot_ghost.pass==2 && shot_ghost.kind==GHOST_DREX_CONTACT) {shot_ghost.pass=0;return;}
+  unsigned d=cpu->D;
+  if(shot_ghost.pass || state.menu_owner || state.scene_owner || state.stage_pending ||
+      g_ram[0xd3]!=4 || !ghost_partner_ready() || d<0xe68 || d>=0x1228 ||
+      (d-0xe68)%64 || !g_ram[d] || g_ram[d+10]!=0x62) return;
+  shot_ghost_begin(cpu,GHOST_DREX_CONTACT,pc&0xffffff);
 }
 /* Launch Octopus's vortex is effect $16, not the enemy current generator.
  * Its native update ($81:F493) clears/sets BE4 and moves only BA8. Replay
@@ -2058,6 +2090,10 @@ void MmxCoopRegisterHooks(void) {
     interp_bridge_add_pre_opcode_hook(ghosts[i],object_ghost_hook);
   interp_bridge_add_pre_opcode_hook(0x00d359,current_ghost_hook);
   interp_bridge_add_pre_opcode_hook(0x00d35c,current_ghost_hook);
+  interp_bridge_set_pre_opcode_hook(0x87dac4,eagle_wind_hook);
+  interp_bridge_set_pre_opcode_hook(0x87db0e,eagle_wind_hook);
+  interp_bridge_set_pre_opcode_hook(0x88c333,drex_contact_hook);
+  interp_bridge_set_pre_opcode_hook(0x88c35f,drex_contact_hook);
   const unsigned views[]={0x00dcd7,0x00dd2d,0x82807d,0x82809e,0x8280c3,0x838957};
   for(unsigned i=0;i<sizeof(views)/sizeof(views[0]);++i)
     interp_bridge_set_pre_opcode_hook(views[i],view_world_hook);
