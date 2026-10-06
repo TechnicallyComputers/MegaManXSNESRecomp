@@ -1047,6 +1047,7 @@ static void coop_slime_checks(const char *fixture,uint8_t *start,uint8_t *expect
 #include "mmx_coop_octopus_test.inc"
 #include "mmx_coop_vile_test.inc"
 #include "mmx_coop_bounce_test.inc"
+#include "mmx_hadouken_test.inc"
 static void coop_checks(const char *assets, const char *fixture,
                         uint8_t *start, uint8_t *expected, uint8_t *actual, size_t cap) {
   check(assets && fixture, "co-op check requires private source assets and a grounded fixture");
@@ -1055,6 +1056,7 @@ static void coop_checks(const char *assets, const char *fixture,
   const char *x2=getenv("MMX_COOP_X2_ASSETS"),*x3=getenv("MMX_COOP_X3_ASSETS");
   if (x2 && x3) check(MmxWeaponsLoadPage(x2,1) && MmxWeaponsLoadPage(x3,2),"private original weapon source packs load");
   if(getenv("MMX_COOP_DREX_FIXTURE")) {coop_drex_rider_checks(getenv("MMX_COOP_DREX_FIXTURE"),start,expected,actual,cap);return;}
+  if(getenv("MMX_HADOUKEN_TEST")) {hadouken_checks(fixture,start,expected,actual,cap);return;}
   if(getenv("MMX_COOP_EAGLE_WIND_FIXTURES")) {coop_eagle_wind_checks(getenv("MMX_COOP_EAGLE_WIND_FIXTURES"),start,expected,actual,cap);return;}
   if(getenv("MMX_COOP_VILE_SCRIPT_FIXTURE")) {
     if(getenv("MMX_COOP_BOUNCE_TEST")) coop_bounce_checks(getenv("MMX_COOP_VILE_SCRIPT_FIXTURE"));

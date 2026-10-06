@@ -12,6 +12,7 @@
 #include "mmx_display.h"
 #include "mmx_renderer.h"
 #include "mmx_zero.h"
+#include "mmx_knc_bugfix.h"
 #include "mmx_weapon_combat.h"
 #include "mmx_weapons.h"
 #include "snes/cart.h"
@@ -47,7 +48,7 @@ static void MmxPrepareFrame(int dw, int dh, int *w, int *h) {
   /* A room has one logical field. Window size and each peer's offline pixel
    * preference cannot widen it. The offline setting is never overwritten. */
   SnesDisplayAspect aspect = SnesDisplayAspect_Clamp(MmxNetplayActive() ? 0 : g_config.display_aspect);
-  g_mmx_custom_renderer = !MMX_VARIANT_JP && (g_config.widescreen || MmxZeroEnabled() || MmxWeaponsEnabled());
+  g_mmx_custom_renderer = !MMX_VARIANT_JP && (g_config.widescreen || MmxZeroEnabled() || MmxWeaponsEnabled() || MmxKncBugfixActive(0) || MmxKncBugfixActive(1));
   g_mmx_custom_view = MmxRendererViewport(g_mmx_custom_aspect, dw, dh,
       aspect);
   if (!g_config.widescreen) {
@@ -86,6 +87,7 @@ static void MmxBeforeFrame(void) {
   if (g_mmx_custom_renderer) MmxRendererLatchSprites();
 }
 static void MmxResetRenderer(void) {
+  MmxKncBugfixReset();
   MmxRendererReset();
   s_render_valid = false;
 }

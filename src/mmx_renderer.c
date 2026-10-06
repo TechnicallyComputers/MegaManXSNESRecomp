@@ -3,6 +3,7 @@
 #include "mmx_wide_policy.h"
 #include "mmx_render_assets.h"
 #include "mmx_zero.h"
+#include "mmx_knc_bugfix.h"
 #include "mmx_weapons.h"
 #include "mmx_weapon_combat.h"
 #include "mmx_coop_view.h"
@@ -1093,6 +1094,8 @@ static void coop_partner_row(const Ppu *ppu,const Raster *r,int y,MmxRenderView 
   }
   x1_weapon_palette(&weapon_palette,weapon_colors,partner->weapons.page);
   coop_sting_palette(ram,&weapon_palette);
+  if(!zero && MmxKncBugfixActive(frame_coop.current^1))
+    MmxRenderAssetsStingPalette(MmxKncBugfixPhase(),weapon_palette.colors);
   if (zero && ram[0xbb6]) {
     const uint8_t *body = MmxZeroPose(ram,&partner->zero);
     const uint8_t *blade = MmxZeroBlade(&partner->zero);
@@ -1256,6 +1259,17 @@ bool MmxRendererDraw(uint32_t *out, MmxRenderView view, bool hud) {
   MmxSpriteAsset x_weapon_palette = {0};
   x1_weapon_palette(&x_weapon_palette,weapon_colors,weapon_page);
   if(stage && frame_coop.initialized) coop_sting_palette(frame.ram,&x_weapon_palette);
+  unsigned knc_bugfix_seat=frame_coop.initialized?frame_coop.current:0;
+  bool knc_bugfix=stage && (!MmxZeroEnabled() || frame_zero.active_x) &&
+      MmxKncBugfixActive(knc_bugfix_seat);
+  if(knc_bugfix) {
+    if(!weapon_colors) {
+      const MmxSpriteAsset *native=MmxRenderAssetsWeaponX(frame.ram[0xbdb]/2,true);
+      if(native) x1_weapon_palette(&x_weapon_palette,native->colors,0);
+    }
+    MmxRenderAssetsStingPalette(MmxKncBugfixPhase(),x_weapon_palette.colors);
+    weapon_colors=x_weapon_palette.colors;
+  }
   prepare_stage_planes();
   LightBeam beams[2];
   unsigned beam_count = stage ? spark_lights(beams, view.extra) : 0;
@@ -1469,8 +1483,8 @@ bool MmxRendererDraw(uint32_t *out, MmxRenderView view, bool hud) {
        * Pieces drawn with another palette (the charge glow, armor parts)
        * keep live CGRAM: substituting them lost the glow and flattened
        * the boots. */
-      if (frame_zero.active_x && weapon_colors && zero_actor(s.object, s.animation) &&
-          (menu || ((attr & 0x0e00) == 0x0200 && !x_charging(frame.ram)))) asset = &x_weapon_palette;
+      if ((frame_zero.active_x || knc_bugfix) && weapon_colors && zero_actor(s.object, s.animation) &&
+          (menu || ((attr & 0x0e00) == 0x0200 && (!x_charging(frame.ram) || knc_bugfix)))) asset = &x_weapon_palette;
       if(stage && frame_coop.initialized && s.object>=0x1228 && s.object<0x1428 &&
           frame.ram[s.object+10]==0x0c && s.animation==0x47 && (s.attr&0x0e00)==0x0600)
         asset=MmxRenderAssetsWeaponX(6,false);
