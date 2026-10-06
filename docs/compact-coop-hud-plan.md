@@ -1,10 +1,10 @@
-# Compact co-op HUD (preview awaiting visual review)
+# Compact co-op HUD
 
 Owner request, 2026-10-05. Tracker: beads-8wg.1.116.
 Branch: feat/compact-coop-hud. Base: origin/main d409e26.
 
 Owner requested the implementation preview on 2026-10-05.
-Final visual acceptance remains pending.
+Owner approved the third preview on 2026-10-05.
 
 Layout confirmed by the owner, 2026-10-05:
 
@@ -51,8 +51,16 @@ The second preview replaces the detached footer corners with a mirrored
 cap from the same meter frame. Upright character/weapon symbols are
 composited inside that continuous frame using their original pixels and
 palettes. Native Shotgun Ice and Fire Wave icons were also inspected.
-Owner visual acceptance remains pending.
+Owner approved the third preview on 2026-10-05.
 
 The third preview preserves the white top-cap highlight above the weapon
 panel, moving the upright weapon symbol down one pixel to avoid covering
 that bevel. Health and ammo cap thickness now matches.
+
+## Layout option
+
+The Co-op mod exposes a HUD layout dropdown. Compact is the default when
+no preference is saved; Horizontal restores the original side-by-side meters.
+The choice is applied by the co-op plugin and survives save-state loads.
+Both choices were activated through the real launcher provider and rendered
+with full, partial, empty and absent ammo in 4:3 and 16:9.

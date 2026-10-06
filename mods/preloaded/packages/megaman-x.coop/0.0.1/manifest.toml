@@ -61,6 +61,20 @@ label = "Unified"
 value = "independent"
 label = "Independent (Experimental)"
 
+[[option]]
+feature = "coop"
+id = "hud"
+label = "HUD layout"
+description = "Compact stacks X above Zero in two aligned columns. Horizontal places all meters side by side."
+type = "choice"
+default = "compact"
+[[option.choice]]
+value = "compact"
+label = "Compact"
+[[option.choice]]
+value = "horizontal"
+label = "Horizontal"
+
 [[resource]]
 feature = "coop"
 id = "x3-rom"
