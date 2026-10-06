@@ -1058,6 +1058,7 @@ static void coop_checks(const char *assets, const char *fixture,
   if(getenv("MMX_COOP_DREX_FIXTURE")) {coop_drex_rider_checks(getenv("MMX_COOP_DREX_FIXTURE"),start,expected,actual,cap);return;}
   if(getenv("MMX_HADOUKEN_TEST")) {hadouken_checks(fixture,start,expected,actual,cap);return;}
   if(getenv("MMX_COOP_EAGLE_WIND_FIXTURES")) {coop_eagle_wind_checks(getenv("MMX_COOP_EAGLE_WIND_FIXTURES"),start,expected,actual,cap);return;}
+  if(getenv("MMX_COOP_HIGHWAY_VILE_FIXTURE")) {coop_highway_vile_checks(getenv("MMX_COOP_HIGHWAY_VILE_FIXTURE"));return;}
   if(getenv("MMX_COOP_VILE_SCRIPT_FIXTURE")) {
     if(getenv("MMX_COOP_BOUNCE_TEST")) coop_bounce_checks(getenv("MMX_COOP_VILE_SCRIPT_FIXTURE"));
     else coop_vile_checks(getenv("MMX_COOP_VILE_SCRIPT_FIXTURE"));

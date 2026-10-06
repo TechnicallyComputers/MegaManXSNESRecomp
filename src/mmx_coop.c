@@ -721,7 +721,20 @@ static bool vile_capture(const uint8_t *r) {
   return false;
 }
 static bool vile_script_object(unsigned d) {
-  if(g_ram[0x1f7a]!=9 || !g_ram[d]) return false;
+  if(!g_ram[d]) return false;
+  if(g_ram[0x1f7a]==0) {
+    if(d>=0xe68 && d<0x1228 && !((d-0xe68)%64)) {
+      unsigned c=g_ram[d+10];
+      /* The Highway ship loads Vile's music before spawning him. Replaying
+       * this controller for P2 restores WRAM's old audio acknowledgement,
+       * but the SPC has already accepted the upload: the real pass then
+       * waits forever for an acknowledgement that can no longer arrive.
+       * Vile and story Zero likewise run their scripts only once. */
+      return c==0x1a || c==0x32 || c==0x33;
+    }
+    return false;
+  }
+  if(g_ram[0x1f7a]!=9) return false;
   if(d>=0xe68 && d<0x1228 && !((d-0xe68)%64)) {
     unsigned c=g_ram[d+10];
     return c==0x66 || c==0x64 || (c==0x67 && g_ram[d+1]<4) ||
