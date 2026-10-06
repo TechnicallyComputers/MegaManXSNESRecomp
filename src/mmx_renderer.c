@@ -1176,13 +1176,15 @@ static void coop_partner_row(const Ppu *ppu,const Raster *r,int y,MmxRenderView 
 }
 static void coop_meter_row(const Ppu *ppu,const Raster *r,int y,MmxRenderView view,
                            uint16_t *objects,int *colors,int x,unsigned value,unsigned maximum,
-                           unsigned palette,const MmxSpriteAsset *art) {
+                           unsigned palette,const MmxSpriteAsset *art,int icon_y,bool inverted) {
   /* The native $D82C/$D94A meter uses overlapping 16px strips. Retain its
    * partial-strip placement and OAM order, including the cap above max HP. */
   typedef struct {int y;unsigned tile;} Strip;
   Strip strips[8];unsigned count=0;
   if(maximum>32) maximum=32;
   if(value>maximum) value=maximum;
+  /* Mirror Zero's frame, but keep remaining energy at the bottom. */
+  if(inverted) value=maximum-value;
   int top=64,remaining=(int)value;
   while(remaining>0) {
     remaining-=8;int sy=top-(remaining<0?remaining*2:0);
@@ -1194,19 +1196,30 @@ static void coop_meter_row(const Ppu *ppu,const Raster *r,int y,MmxRenderView vi
     strips[count++]=(Strip){sy,0x82};top=sy-16;
   } while(remaining>=0);
   strips[count++]=(Strip){top,0x84};
-  for(int i=(int)count-1;i>=0;--i)
-    sprite(ppu,r,x,strips[i].y,0x3000|(palette<<9)|strips[i].tile,16,y,view,
-        objects,false,art,strips[i].tile,colors,true,false,false);
+  for(int i=(int)count-1;i>=0;--i) {
+    unsigned tile=strips[i].tile;
+    int sy=strips[i].y+icon_y-80;
+    unsigned attr=0x3000|(palette<<9);
+    if(inverted) {
+      sy=icon_y+80-strips[i].y;
+      if(tile==0x80) tile=0x82;
+      else if(tile==0x82) tile=0x80;
+      attr|=0x8000;
+    }
+    sprite(ppu,r,x,sy,attr|tile,16,y,view,
+        objects,false,art,tile,colors,true,false,false);
+  }
 }
 static void coop_hud_row(const Ppu *ppu,const Raster *r,int y,MmxRenderView view,bool anchored,
                          uint16_t *objects,int *colors) {
   for(unsigned seat=0;seat<2;++seat) {
     const MmxCoopPlayer *player=&frame_coop.players[seat];
     if(seat && player->status==MMX_COOP_ABSENT) continue;
-    int x=8+(int)seat*32-(anchored?view.extra:0);
+    bool inverted=player->character==MMX_COOP_ZERO;
+    int x=8-(anchored?view.extra:0),icon_y=inverted?100:80;
     unsigned hp=player->status==MMX_COOP_FALLEN?0:player->body[0x27]&127;
-    coop_meter_row(ppu,r,y,view,objects,colors,x,hp,frame.ram[0x1f9a],2,NULL);
-    sprite(ppu,r,x,80,0x3486,16,y,view,objects,false,NULL,0,colors,true,
+    coop_meter_row(ppu,r,y,view,objects,colors,x,hp,frame.ram[0x1f9a],2,NULL,icon_y,inverted);
+    sprite(ppu,r,x,icon_y,0x3486,16,y,view,objects,false,NULL,0,colors,true,
         player->character==MMX_COOP_ZERO,false);
     unsigned page=player->weapons.page;
     unsigned weapon=page?player->weapons.weapon:player->body[0x33]/2;
@@ -1216,11 +1229,11 @@ static void coop_hud_row(const Ppu *ppu,const Raster *r,int y,MmxRenderView view
     const uint16_t *palette=page?MmxWeaponsPalette(page,weapon,false):native?native->colors:NULL;
     MmxSpriteAsset bar={0};bar.live_tiles=true;
     if(palette) memcpy(bar.colors,palette,sizeof(bar.colors));
-    coop_meter_row(ppu,r,y,view,objects,colors,x+16,energy,28,3,palette?&bar:NULL);
+    coop_meter_row(ppu,r,y,view,objects,colors,x+16,energy,28,3,palette?&bar:NULL,icon_y,inverted);
     if(!page) {
-      sprite(ppu,r,x+16,80,0x3620,16,y,view,objects,false,native,0x20,colors,true,false,false);
+      sprite(ppu,r,x+16,icon_y,0x3620,16,y,view,objects,false,native,0x20,colors,true,false,false);
     } else {
-      const MmxWeaponPose *icon=MmxWeaponsHudIcon(page,weapon);int row=y-80;
+      const MmxWeaponPose *icon=MmxWeaponsHudIcon(page,weapon);int row=y-icon_y;
       if(icon && palette && row>=0 && row<16) for(int col=0;col<16;++col) {
         unsigned pixel=icon->pixels[row*16+col];int dx=x+16+col+view.extra;
         if(pixel && dx>=0 && dx<view.width) {objects[dx]=(uint16_t)(0xe6b0|pixel);colors[dx]=palette[pixel];}

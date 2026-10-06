@@ -1,9 +1,10 @@
-# Compact co-op HUD (parked)
+# Compact co-op HUD (preview awaiting visual review)
 
 Owner request, 2026-10-05. Tracker: beads-8wg.1.116.
 Branch: feat/compact-coop-hud. Base: origin/main d409e26.
 
-No implementation is requested yet. Resume only when the owner asks.
+Owner requested the implementation preview on 2026-10-05.
+Final visual acceptance remains pending.
 
 Layout confirmed by the owner, 2026-10-05:
 
@@ -32,3 +33,16 @@ this done or shipping it. Final owner visual review is required.
 Review full, partial and empty health/ammo, health-only and weapon-equipped
 states, 4:3 and widescreen, and both player character assignments. Preserve
 single-player HUD behavior and keep boss health readable without overlap.
+
+## Preview
+
+The co-op renderer now anchors both health bars at x=8 and both ammo bars
+at x=24. X badges remain at y=80; Zero badges move to y=100. Zero meter
+frames are mirrored vertically, with upright badges and remaining fill at
+the bottom. Placement follows character identity, independent of controller
+seat. Single-player rendering is unchanged.
+
+Full, partial, empty and health-only renderer captures were inspected in
+4:3 and 16:9. A separate prefilled preview executable is in
+`build-hud-preview/MegaManXSNESRecomp-hud-preview-private/`. Slot 01 is a
+HUD review checkpoint; the existing player build and its saves are intact.
