@@ -1219,23 +1219,26 @@ static void coop_inverted_badge_row(const Ppu *ppu,const Raster *r,int y,MmxRend
   sprite(ppu,r,x,icon_y,0xb086|(palette<<9),16,y,view,objects,false,
       frame_art,0x86,colors,true,false,false);
   int row=y-icon_y;
-  if(row<2 || row>13) return;
+  int panel_bottom=palette==3?14:13;
+  if(row<3 || row>panel_bottom) return;
+  /* Leave the cap's white highlight intact above the dark weapon panel. */
+  int source_row=row-(palette==3);
   for(unsigned col=2;col<14;++col) {
-    if((row==2 || row==13) && (col==2 || col==13)) continue;
+    if(row==panel_bottom && (col==2 || col==13)) continue;
     int dx=x+(int)col+view.extra;
     if(dx<0 || dx>=view.width) continue;
-    int color=zero?MmxZeroHudColor(col,(unsigned)row):-1;
+    int color=zero?MmxZeroHudColor(col,(unsigned)source_row):-1;
     if(color<0) {
       unsigned tile=palette==2?0x86:0x20;
-      unsigned number=(((tile>>4)+(unsigned)row/8)<<4)|((tile&15)+col/8);
+      unsigned number=(((tile>>4)+(unsigned)source_row/8)<<4)|((tile&15)+col/8);
       unsigned pixel;
-      if(icon) pixel=icon->pixels[row*16+col];
+      if(icon) pixel=icon->pixels[source_row*16+col];
       else if(icon_art && !icon_art->live_tiles) {
-        const uint8_t *bits=icon_art->tiles+number*32+(row&7)*2;
+        const uint8_t *bits=icon_art->tiles+number*32+(source_row&7)*2;
         unsigned shift=7-(col&7);
         pixel=((bits[0]>>shift)&1)|(((bits[1]>>shift)&1)<<1)|
             (((bits[16]>>shift)&1)<<2)|(((bits[17]>>shift)&1)<<3);
-      } else pixel=tile_pixel(r->vram,(ppu->obsel&7)*8192+number*16,col&7,row&7,4);
+      } else pixel=tile_pixel(r->vram,(ppu->obsel&7)*8192+number*16,col&7,source_row&7,4);
       color=frame_art?frame_art->colors[pixel]:r->palette[128+palette*16+pixel];
     }
     objects[dx]=0xe6a1;colors[dx]=color;
