@@ -1,11 +1,11 @@
-﻿# Compact co-op HUD (parked)
+# Compact co-op HUD (parked)
 
 Owner request, 2026-10-05. Tracker: beads-8wg.1.116.
 Branch: feat/compact-coop-hud. Base: origin/main d409e26.
 
 No implementation is requested yet. Resume only when the owner asks.
 
-Proposed interpretation, awaiting owner confirmation:
+Layout confirmed by the owner, 2026-10-05:
 
 | Upper player row | |
 | --- | --- |
@@ -23,9 +23,6 @@ The intent is two bar widths instead of four, with more vertical stacking.
 Choose bar height and spacing during visual design so the combined panel is
 compact and does not obscure gameplay. Use the existing game pixel art and
 HUD style. Preserve weapon identity and the current handling of absent ammo.
-
-The owner's wording also says "second column"; an explicit layout question
-was sent. Confirm the intended rows/columns before implementation.
 
 ## Acceptance
 
