@@ -3,6 +3,7 @@
 #include "mmx_wide_policy.h"
 #include "mmx_render_assets.h"
 #include "mmx_zero.h"
+#include "mmx_knc_bugfix.h"
 #include "mmx_weapons.h"
 #include "mmx_weapon_combat.h"
 #include "mmx_coop_view.h"
@@ -72,6 +73,8 @@ static SubmarineBody submarine_bodies[16];
 static unsigned submarine_count;
 bool g_mmx_custom_renderer;
 bool g_mmx_custom_hud = true;
+static bool coop_hud_compact = true;
+void MmxRendererSetCompactCoopHud(bool compact) { coop_hud_compact=compact; }
 bool g_mmx_expanded_sprites;
 bool g_mmx_render_asset_repairs = true;
 MmxRenderAspect g_mmx_custom_aspect = MMX_ASPECT_ADAPTIVE;
@@ -1093,6 +1096,8 @@ static void coop_partner_row(const Ppu *ppu,const Raster *r,int y,MmxRenderView 
   }
   x1_weapon_palette(&weapon_palette,weapon_colors,partner->weapons.page);
   coop_sting_palette(ram,&weapon_palette);
+  if(!zero && MmxKncBugfixActive(frame_coop.current^1))
+    MmxRenderAssetsStingPalette(MmxKncBugfixPhase(),weapon_palette.colors);
   if (zero && ram[0xbb6]) {
     const uint8_t *body = MmxZeroPose(ram,&partner->zero);
     const uint8_t *blade = MmxZeroBlade(&partner->zero);
@@ -1162,7 +1167,8 @@ static void coop_partner_row(const Ppu *ppu,const Raster *r,int y,MmxRenderView 
        * Another seat can replace the shared $6200/$6300 weapon upload. */
       if(d>=0x1228 && ram[d+10]==0x0c && group==0x47 && (s.attr&0x0e00)==0x0600)
         asset=MmxRenderAssetsWeaponX(6,false);
-      if(d>=0x1228 && ((ram[d+10]==3 && group==0x9e) || (ram[d+10]==2 && group==0x0e))) {
+      if(d>=0x1228 && ((ram[d+10]==3 && group==0x9e) ||
+          ((ram[d+10]==1 || ram[d+10]==2) && group==0x0e))) {
         const MmxSpriteAsset *beam=MmxRenderAssetsChargedBuster(group,ram[d+23]&127);
         if(beam) asset=beam;
       }
@@ -1172,13 +1178,15 @@ static void coop_partner_row(const Ppu *ppu,const Raster *r,int y,MmxRenderView 
 }
 static void coop_meter_row(const Ppu *ppu,const Raster *r,int y,MmxRenderView view,
                            uint16_t *objects,int *colors,int x,unsigned value,unsigned maximum,
-                           unsigned palette,const MmxSpriteAsset *art) {
+                           unsigned palette,const MmxSpriteAsset *art,int icon_y,bool inverted) {
   /* The native $D82C/$D94A meter uses overlapping 16px strips. Retain its
    * partial-strip placement and OAM order, including the cap above max HP. */
   typedef struct {int y;unsigned tile;} Strip;
   Strip strips[8];unsigned count=0;
   if(maximum>32) maximum=32;
   if(value>maximum) value=maximum;
+  /* Mirror Zero's frame, but keep remaining energy at the bottom. */
+  if(inverted) value=maximum-value;
   int top=64,remaining=(int)value;
   while(remaining>0) {
     remaining-=8;int sy=top-(remaining<0?remaining*2:0);
@@ -1190,19 +1198,65 @@ static void coop_meter_row(const Ppu *ppu,const Raster *r,int y,MmxRenderView vi
     strips[count++]=(Strip){sy,0x82};top=sy-16;
   } while(remaining>=0);
   strips[count++]=(Strip){top,0x84};
-  for(int i=(int)count-1;i>=0;--i)
-    sprite(ppu,r,x,strips[i].y,0x3000|(palette<<9)|strips[i].tile,16,y,view,
-        objects,false,art,strips[i].tile,colors,true,false,false);
+  for(int i=(int)count-1;i>=0;--i) {
+    unsigned tile=strips[i].tile;
+    int sy=strips[i].y+icon_y-80;
+    unsigned attr=0x3000|(palette<<9);
+    if(inverted) {
+      sy=icon_y+80-strips[i].y;
+      if(tile==0x80) tile=0x82;
+      else if(tile==0x82) tile=0x80;
+      attr|=0x8000;
+    }
+    sprite(ppu,r,x,sy,attr|tile,16,y,view,
+        objects,false,art,tile,colors,true,false,false);
+  }
+}
+static void coop_inverted_badge_row(const Ppu *ppu,const Raster *r,int y,MmxRenderView view,
+                                    uint16_t *objects,int *colors,int x,int icon_y,unsigned palette,
+                                    const MmxSpriteAsset *frame_art,const MmxSpriteAsset *icon_art,
+                                    const MmxWeaponPose *icon,bool zero) {
+  /* Use the meter's own frame/palette for the top cap. Replace only the
+   * upright symbol panel, leaving its sides continuous with the meter. */
+  sprite(ppu,r,x,icon_y,0xb086|(palette<<9),16,y,view,objects,false,
+      frame_art,0x86,colors,true,false,false);
+  int row=y-icon_y;
+  int panel_bottom=palette==3?14:13;
+  if(row<3 || row>panel_bottom) return;
+  /* Leave the cap's white highlight intact above the dark weapon panel. */
+  int source_row=row-(palette==3);
+  for(unsigned col=2;col<14;++col) {
+    if(row==panel_bottom && (col==2 || col==13)) continue;
+    int dx=x+(int)col+view.extra;
+    if(dx<0 || dx>=view.width) continue;
+    int color=zero?MmxZeroHudColor(col,(unsigned)source_row):-1;
+    if(color<0) {
+      unsigned tile=palette==2?0x86:0x20;
+      unsigned number=(((tile>>4)+(unsigned)source_row/8)<<4)|((tile&15)+col/8);
+      unsigned pixel;
+      if(icon) pixel=icon->pixels[source_row*16+col];
+      else if(icon_art && !icon_art->live_tiles) {
+        const uint8_t *bits=icon_art->tiles+number*32+(source_row&7)*2;
+        unsigned shift=7-(col&7);
+        pixel=((bits[0]>>shift)&1)|(((bits[1]>>shift)&1)<<1)|
+            (((bits[16]>>shift)&1)<<2)|(((bits[17]>>shift)&1)<<3);
+      } else pixel=tile_pixel(r->vram,(ppu->obsel&7)*8192+number*16,col&7,source_row&7,4);
+      color=frame_art?frame_art->colors[pixel]:r->palette[128+palette*16+pixel];
+    }
+    objects[dx]=0xe6a1;colors[dx]=color;
+  }
 }
 static void coop_hud_row(const Ppu *ppu,const Raster *r,int y,MmxRenderView view,bool anchored,
                          uint16_t *objects,int *colors) {
   for(unsigned seat=0;seat<2;++seat) {
     const MmxCoopPlayer *player=&frame_coop.players[seat];
     if(seat && player->status==MMX_COOP_ABSENT) continue;
-    int x=8+(int)seat*32-(anchored?view.extra:0);
+    bool inverted=coop_hud_compact && player->character==MMX_COOP_ZERO;
+    int x=8+(coop_hud_compact?0:(int)seat*32)-(anchored?view.extra:0),icon_y=inverted?100:80;
     unsigned hp=player->status==MMX_COOP_FALLEN?0:player->body[0x27]&127;
-    coop_meter_row(ppu,r,y,view,objects,colors,x,hp,frame.ram[0x1f9a],2,NULL);
-    sprite(ppu,r,x,80,0x3486,16,y,view,objects,false,NULL,0,colors,true,
+    coop_meter_row(ppu,r,y,view,objects,colors,x,hp,frame.ram[0x1f9a],2,NULL,icon_y,inverted);
+    if(inverted) coop_inverted_badge_row(ppu,r,y,view,objects,colors,x,icon_y,2,NULL,NULL,NULL,true);
+    else sprite(ppu,r,x,icon_y,0x3486,16,y,view,objects,false,NULL,0,colors,true,
         player->character==MMX_COOP_ZERO,false);
     unsigned page=player->weapons.page;
     unsigned weapon=page?player->weapons.weapon:player->body[0x33]/2;
@@ -1212,11 +1266,14 @@ static void coop_hud_row(const Ppu *ppu,const Raster *r,int y,MmxRenderView view
     const uint16_t *palette=page?MmxWeaponsPalette(page,weapon,false):native?native->colors:NULL;
     MmxSpriteAsset bar={0};bar.live_tiles=true;
     if(palette) memcpy(bar.colors,palette,sizeof(bar.colors));
-    coop_meter_row(ppu,r,y,view,objects,colors,x+16,energy,28,3,palette?&bar:NULL);
-    if(!page) {
-      sprite(ppu,r,x+16,80,0x3620,16,y,view,objects,false,native,0x20,colors,true,false,false);
+    coop_meter_row(ppu,r,y,view,objects,colors,x+16,energy,28,3,palette?&bar:NULL,icon_y,inverted);
+    if(inverted) {
+      coop_inverted_badge_row(ppu,r,y,view,objects,colors,x+16,icon_y,3,palette?&bar:NULL,
+          native,page?MmxWeaponsHudIcon(page,weapon):NULL,false);
+    } else if(!page) {
+      sprite(ppu,r,x+16,icon_y,0x3620,16,y,view,objects,false,native,0x20,colors,true,false,false);
     } else {
-      const MmxWeaponPose *icon=MmxWeaponsHudIcon(page,weapon);int row=y-80;
+      const MmxWeaponPose *icon=MmxWeaponsHudIcon(page,weapon);int row=y-icon_y;
       if(icon && palette && row>=0 && row<16) for(int col=0;col<16;++col) {
         unsigned pixel=icon->pixels[row*16+col];int dx=x+16+col+view.extra;
         if(pixel && dx>=0 && dx<view.width) {objects[dx]=(uint16_t)(0xe6b0|pixel);colors[dx]=palette[pixel];}
@@ -1255,6 +1312,17 @@ bool MmxRendererDraw(uint32_t *out, MmxRenderView view, bool hud) {
   MmxSpriteAsset x_weapon_palette = {0};
   x1_weapon_palette(&x_weapon_palette,weapon_colors,weapon_page);
   if(stage && frame_coop.initialized) coop_sting_palette(frame.ram,&x_weapon_palette);
+  unsigned knc_bugfix_seat=frame_coop.initialized?frame_coop.current:0;
+  bool knc_bugfix=stage && (!MmxZeroEnabled() || frame_zero.active_x) &&
+      MmxKncBugfixActive(knc_bugfix_seat);
+  if(knc_bugfix) {
+    if(!weapon_colors) {
+      const MmxSpriteAsset *native=MmxRenderAssetsWeaponX(frame.ram[0xbdb]/2,true);
+      if(native) x1_weapon_palette(&x_weapon_palette,native->colors,0);
+    }
+    MmxRenderAssetsStingPalette(MmxKncBugfixPhase(),x_weapon_palette.colors);
+    weapon_colors=x_weapon_palette.colors;
+  }
   prepare_stage_planes();
   LightBeam beams[2];
   unsigned beam_count = stage ? spark_lights(beams, view.extra) : 0;
@@ -1362,7 +1430,7 @@ bool MmxRendererDraw(uint32_t *out, MmxRenderView view, bool hud) {
       bool red_death = stage && s.animation == 0x1d && MmxZeroDeathOrbRed(frame.ram,s.object);
       bool coop_buster=stage && frame_coop.initialized && s.object>=0x1228 && s.object<0x1428 &&
           ((frame.ram[s.object+10]==3 && s.animation==0x9e) ||
-           (frame.ram[s.object+10]==2 && s.animation==0x0e));
+           ((frame.ram[s.object+10]==1 || frame.ram[s.object+10]==2) && s.animation==0x0e));
       bool menu_body = s.object == 0x1988 && (s.animation == 0 || s.animation == 0x18);
       bool zero_body = zero && (s.object == 0xba8 || menu_body);
       bool triad_x_body=cast_body && !zero && s.object==0xba8;
@@ -1468,8 +1536,8 @@ bool MmxRendererDraw(uint32_t *out, MmxRenderView view, bool hud) {
        * Pieces drawn with another palette (the charge glow, armor parts)
        * keep live CGRAM: substituting them lost the glow and flattened
        * the boots. */
-      if (frame_zero.active_x && weapon_colors && zero_actor(s.object, s.animation) &&
-          (menu || ((attr & 0x0e00) == 0x0200 && !x_charging(frame.ram)))) asset = &x_weapon_palette;
+      if ((frame_zero.active_x || knc_bugfix) && weapon_colors && zero_actor(s.object, s.animation) &&
+          (menu || ((attr & 0x0e00) == 0x0200 && (!x_charging(frame.ram) || knc_bugfix)))) asset = &x_weapon_palette;
       if(stage && frame_coop.initialized && s.object>=0x1228 && s.object<0x1428 &&
           frame.ram[s.object+10]==0x0c && s.animation==0x47 && (s.attr&0x0e00)==0x0600)
         asset=MmxRenderAssetsWeaponX(6,false);

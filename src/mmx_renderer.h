@@ -21,6 +21,7 @@ extern bool g_mmx_expanded_sprites;
 extern bool g_mmx_render_asset_repairs;
 extern MmxRenderAspect g_mmx_custom_aspect;
 extern MmxRenderView g_mmx_custom_view;
+void MmxRendererSetCompactCoopHud(bool compact);
 /* The mod selects the output aspect; Display Aspect selects pixel proportions.
  * Clamp the view extent at those proportions before rounding to an even width. */
 MmxRenderView MmxRendererViewport(MmxRenderAspect aspect, int width, int height,
