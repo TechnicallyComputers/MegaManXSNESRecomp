@@ -1,5 +1,25 @@
 # Mega Man X Recompiled
 
+## Windows frame composition
+
+The pinned shared framework uses cached HLE frame composition by default on
+Windows x64. Guest CPU, mapper, audio and status behavior keep their existing
+interfaces; this is a host presentation optimization. For the maintained
+correctness-reference compositor, configure a separate Release build with
+`cmake -S . -B build-frame-lle -DCMAKE_BUILD_TYPE=Release -DSNESRECOMP_FRAME_IMPL=LLE`,
+then `cmake --build build-frame-lle`. Selection is fixed at build time.
+LLE can reduce performance; it remains available for correctness checks. Other
+platforms keep LLE defaults, and existing CMake cache selections are preserved.
+See [HLE defaults and opt-out](snesrecomp/docs/HLE_DEFAULTS.md).
+
+The reviewed native-view, uncapped Windows route measured 340.936 to 889.911 FPS
+(+161.02%, process CPU -67.17%); it includes boot/menu work and active gameplay.
+The owner accepted the normal-paced adaptive HLE build. These figures describe
+that measured build/route, not a new measurement of subsequent upstream title
+changes or other platforms. Foreign compiler activity limits precision.
+Normal play retains normal pacing/audio. See the shared framework's
+[frame model](snesrecomp/docs/FRAME_MODEL_HOSTS.md) for the host/guest boundary.
+
 Play *Mega Man X* on PC with playable Zero, couch co-op and online netplay,
 all sixteen X2/X3 boss weapons, and adaptive widescreen. Choose Zero's original
 X3 combat or the optional Modern style with direct saber attacks, a second
