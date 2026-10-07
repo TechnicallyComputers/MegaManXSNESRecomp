@@ -13,7 +13,11 @@ def main():
     for name in ("exe", "rom", "x3", "output"):
         parser.add_argument("--" + name, type=Path, required=True)
     parser.add_argument("--port", type=int, default=18010)
+    parser.add_argument("--savestate-menu", action="store_true",
+                        help="Exercise host save/load/cancel and guest authority checks")
+    parser.add_argument("--delay-sync", action="store_true")
     args = parser.parse_args()
+    frames = 360 if args.savestate_menu else 180
     for name in ("exe", "rom", "x3"):
         setattr(args, name, getattr(args, name).resolve(strict=True))
     root = args.output.resolve()
@@ -43,8 +47,12 @@ def main():
             env.update(SNES_NETPLAY="1", SNES_NET_SLOT=str(seat),
                 SNES_NET_BIND=f"127.0.0.1:{args.port + seat}",
                 SNES_NET_PEER=f"127.0.0.1:{args.port + 1 - seat}",
-                SNES_NET_INPUT_PLAYER="0", SNESRECOMP_RUN_FRAMES="180",
+                SNES_NET_INPUT_PLAYER="0", SNESRECOMP_RUN_FRAMES=str(frames),
                 SDL_VIDEODRIVER="dummy")
+            if args.savestate_menu:
+                env["SNES_NET_MENU_SELFTEST"] = "1"
+            if args.delay_sync:
+                env["SNES_NET_MODE"] = "delay"
             log = (peer / "desktop.log").open("wb")
             proc = subprocess.Popen([str(exe), "--no-launcher", "--rom", str(args.rom)],
                 cwd=peer, env=env, stdout=log, stderr=subprocess.STDOUT,
@@ -57,16 +65,29 @@ def main():
             text = (peer / "desktop.log").read_text(errors="replace")
             assert result == 0, text[-4000:]
             digest = re.search(r"RB boot digest agreed \(([0-9a-f]+)\)", text)
-            assert digest, text[-4000:]
-            digests.append(digest.group(1))
-            timing = re.search(r"video totals: simulations=180 presentations=\d+ seconds=([0-9.]+)", text)
+            if not args.delay_sync:
+                assert digest, text[-4000:]
+                digests.append(re.findall(r"RB boot digest agreed \(([0-9a-f]+)\)", text))
+            timing = re.search(rf"video totals: simulations={frames} presentations=\d+ seconds=([0-9.]+)", text)
             assert timing, text[-4000:]
             elapsed = float(timing.group(1))
-            assert elapsed >= 2.9, f"Guest outran the SNES frame rate: {elapsed}s"
+            assert elapsed >= frames / 60 - 0.1, f"Guest outran the SNES frame rate: {elapsed}s"
             assert not (peer / "saves/save0.sav").exists(), "Online match wrote an offline autosave"
             assert "match refused" not in text and "INPUT desync" not in text, text[-4000:]
-            print(f"{peer.name}: boot={digest.group(1)}, 180 frames in {elapsed:.3f}s, no autosave")
-        assert digests[0] == digests[1], "Boot states differ"
+            if args.savestate_menu:
+                assert text.count("menu resumed serial=") == 3, text[-6000:]
+                assert "menu sync failed" not in text and "RB fork" not in text, text[-6000:]
+                if peer.name == "peer0":
+                    assert all(f"action={action}" in text for action in ("save", "load", "cancel"))
+                    assert (peer / "saves/save11.sav").exists(), "Host did not save slot 12"
+                else:
+                    assert "guest actions refused" in text
+                    assert not list((peer / "saves").glob("*.sav")), "Guest wrote a personal save"
+            print(f"{peer.name}: {frames} frames in {elapsed:.3f}s, no autosave")
+        if not args.delay_sync:
+            assert digests[0] == digests[1], f"Boot/resume states differ: {digests}"
+            if args.savestate_menu:
+                assert len(digests[0]) == 4, f"Missing post-resume agreements: {digests}"
     finally:
         for proc, log, _ in processes:
             if proc.poll() is None:
