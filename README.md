@@ -138,10 +138,11 @@ through STUN or through TURN, and any stalls); attach it with the log. The
 file is replaced by the next match.
 
 For intermittent co-op collision problems, tick **Co-op physics diagnostics**
-under **Mods > Developer**, then play normally. Attach `logs/coop-physics-*.csv`
-and its `.previous.csv` companion if present. During netplay the same mod also
-writes `logs/coop-netplay-*.csv` with the same name stem; attach that too, from
-both players if possible. This extra tracing is off by default.
+under **Mods > Developer**, then play normally. The trace is written in 32 MiB
+numbered segments (`logs/coop-physics-<start time>-<pid>-<n>-001.csv`, `-002.csv`,
+...); the newest 32 are kept. Attach every segment of the session. During netplay
+the same mod also writes `logs/coop-netplay-*` segments with the same name stem;
+attach those too, from both players if possible. This extra tracing is off by default.
 
 <details>
 <summary>Building from source and technical details</summary>

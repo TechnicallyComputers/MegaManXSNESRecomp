@@ -60,12 +60,15 @@ static void sound(uint8_t *r,unsigned command) {
   unsigned i=r[0xba3]&30;r[0xb72+i]=(uint8_t)command;r[0xb73+i]=0;r[0xba3]=(uint8_t)((i+2)&30);
 }
 /* Host-only opt-in trace. Never changes WRAM, scheduling or serialized state.
- * Keep two bounded CSV segments so a long play session cannot fill the disk.
+ * Rotates through numbered 32 MiB CSV segments and keeps the newest
+ * DIAGNOSTIC_SEGMENTS, so a full playthrough survives but disk use is bounded.
  * Rollback/replayed frames retain their original guest counters and a distinct
  * host sequence number rather than being mistaken for consecutive simulation. */
+enum { DIAGNOSTIC_SEGMENTS = 32 };
 typedef struct DiagnosticFile {
   FILE *file;
-  char path[2048], previous[2064];
+  char stem[2048], path[2064];
+  unsigned segment;
   long bytes;
   bool checked;
 } DiagnosticFile;
@@ -88,8 +91,12 @@ void MmxCoopSetDiagnosticsEnabled(bool active) {
   diagnostic_sequence=diagnostic_rows=0;
   diagnostic_enabled=active;
 }
+/* Segment <segment> of a trace: <stem>-001.csv, <stem>-002.csv, ... */
+static void diagnostic_segment_path(const DiagnosticFile *t,unsigned segment,char *out,size_t cap) {
+  snprintf(out,cap,"%s-%03u.csv",t->stem,segment);
+}
 /* Both traces of one session share a stem, so they sort and pair together:
- * logs/coop-physics-<time>-<pid>-<n>.csv and logs/coop-netplay-<same>.csv. */
+ * logs/coop-physics-<time>-<pid>-<n>-<segment>.csv and logs/coop-netplay-<same>. */
 static FILE *diagnostic_open(DiagnosticFile *t,const char *kind) {
   if (t->checked) return t->file;
   t->checked=true;
@@ -104,26 +111,30 @@ static FILE *diagnostic_open(DiagnosticFile *t,const char *kind) {
 #endif
     ++diagnostic_session;
   }
-  snprintf(t->path,sizeof(t->path),"logs/coop-%s-%s-%lu-%u.csv",
+  snprintf(t->stem,sizeof(t->stem),"logs/coop-%s-%s-%lu-%u",
       kind,diagnostic_stamp,diagnostic_pid,diagnostic_session);
-  snprintf(t->previous,sizeof(t->previous),"%s.previous.csv",t->path);
+  t->segment=1;diagnostic_segment_path(t,t->segment,t->path,sizeof(t->path));
   t->file=fopen(t->path,"wb");
   if (!t->file) {fprintf(stderr,"[coop-%s] cannot open %s\n",kind,t->path);return NULL;}
-  fprintf(stderr,"[coop-%s] recording %s (32 MiB per segment, plus previous segment)\n",kind,t->path);
+  fprintf(stderr,"[coop-%s] recording %s (32 MiB per segment, newest %u kept)\n",
+      kind,t->path,(unsigned)DIAGNOSTIC_SEGMENTS);
   return t->file;
 }
-/* Keep two bounded segments so a long play session cannot fill the disk. */
+/* Start the next numbered segment; drop the one that leaves the window. */
 static FILE *diagnostic_ready(DiagnosticFile *t,const char *kind,const char *header) {
   if (!diagnostic_open(t,kind)) return NULL;
   if (t->bytes>=32L*1024*1024) {
     fclose(t->file);t->file=NULL;
-    /* Both filenames belong exclusively to this explicitly requested trace. */
-    remove(t->previous);
-    if (rename(t->path,t->previous)) {
-      fprintf(stderr,"[coop-%s] rotation failed; recording stopped\n",kind);return NULL;
+    ++t->segment;
+    if (t->segment>DIAGNOSTIC_SEGMENTS) {
+      /* Every segment of this stem belongs to this explicitly requested trace. */
+      char old[2064];
+      diagnostic_segment_path(t,t->segment-DIAGNOSTIC_SEGMENTS,old,sizeof(old));
+      remove(old);
     }
+    diagnostic_segment_path(t,t->segment,t->path,sizeof(t->path));
     t->file=fopen(t->path,"wb");
-    if (!t->file) return NULL;
+    if (!t->file) {fprintf(stderr,"[coop-%s] cannot open %s; recording stopped\n",kind,t->path);return NULL;}
     t->bytes=0;
   }
   if (!t->bytes) t->bytes=fprintf(t->file,"%s",header);
@@ -700,6 +711,13 @@ static bool teleport_tick(uint8_t *r,MmxCoopPlayer *p) {
   }
   return !z->swap_phase;
 }
+/* $0C16 names the action a script forces on the world actor ($84:9FEB..A07D):
+ * door walks ($18), boss intros ($3A/$1E), and so on; $84:A003 clears it.
+ * The script then belongs to that body until it releases it. */
+static bool world_scripted(const uint8_t *r) {
+  const uint8_t *world=state.anchor==state.current ? r+0xba8 : state.players[state.anchor].body;
+  return world[0x6e]!=0;
+}
 /* Solid terrain somewhere between the body and the level's lowest camera
  * position: falling off the bottom of the screen there is not a pit. */
 static bool floor_below(const uint8_t *r,const uint8_t *b) {
@@ -779,7 +797,10 @@ static bool scene_tick(uint8_t *r) {
     bool low[2];
     for(unsigned seat=0;seat<2;++seat) {
       const uint8_t *b=state.players[seat].body;
-      low[seat]=(int)word(b+8)-32>=(int)word(r+0x1e50)+224 && floor_below(r,b);
+      /* A scripted door scroll moves the lower bound up past a partner
+       * who is still climbing (Sigma 4's gate shaft): not a pit either. */
+      low[seat]=(int)word(b+8)-32>=(int)word(r+0x1e50)+224 &&
+          (floor_below(r,b) || (seat!=state.anchor && world_scripted(r)));
     }
     const uint8_t *b=state.players[state.anchor^1].body,*a=state.players[state.anchor].body;
     int dx=(int)word(b+5)-(int)word(a+5),dy=(int)word(b+8)-(int)word(a+8);
@@ -1230,7 +1251,9 @@ static bool join_tick(uint8_t *r) {
     }
     r[0xb9d]=r[0xba0]=0;return true;
   }
-  bool gameplay=r[0xd1]==2 && r[0xd2]==4 && r[0xd3]==4 && r[0xba9]==2 &&
+  /* No voluntary join or withdrawal while a script holds the world actor.
+   * P1 returning during Sigma 4's intro took the world from the locked Zero. */
+  bool gameplay=r[0xd1]==2 && r[0xd2]==4 && r[0xd3]==4 && r[0xba9]==2 && !world_scripted(r) &&
       (r[0xbcf]&127) && r[0xbaa]!=12 &&
       !r[0x1f0c] && r[0x1f10]<6 && !r[0x1f23] && !r[0x1f48] && !r[0x1f19];
   if (!gameplay) {state.select_hold=state.p1_select_hold=0;return false;}
@@ -1427,8 +1450,9 @@ static void pickup_hook(CpuState *cpu,uint32_t pc) {
  *   world actor projected, so Launch Octopus's upward currents only lifted
  *   the world actor.
  * Before such a run, replay it once with the other seat's body projected,
- * keep only that body's motion result, and restore everything else (WRAM,
- * weapon combat, Zero and co-op state, renderer pieces), so every object
+ * keep only that body's motion result, and restore everything else (WRAM
+ * except the SPC mirror bytes, weapon combat, Zero and co-op state, renderer
+ * pieces), so every object
  * still advances once. Couch co-op only for objects: online views already
  * project the nearest player for AI. */
 enum { GHOST_SHOTS=1, GHOST_OBJECT, GHOST_CURRENT, GHOST_EAGLE_WIND, GHOST_DREX_CONTACT };
@@ -1509,9 +1533,17 @@ static void shot_ghost_begin(CpuState *cpu,unsigned kind,uint32_t resume) {
   memcpy(g_ram+0xba8,shot_ghost.body,sizeof(shot_ghost.body));
   shot_ghost.pass=1;
 }
+/* $7EFFFC..FFFF mirror the sound CPU: the driver's ready flag, current track
+ * and upload handshake counter. A replay that changes music ($80:87A2, e.g.
+ * Velguarder at full HP) really uploads to the SPC, which no WRAM rollback
+ * undoes. Restoring the old counter left the real update spinning forever at
+ * $80:8701 (LDA $7EFFFE / CMP $2142), so these bytes keep the replay's values. */
+enum { GHOST_SPC_MIRROR=0x1fffc };
 static void shot_ghost_end(CpuState *cpu,uint32_t pc) {
   uint8_t result[0x90];memcpy(result,g_ram+0xba8,sizeof(result));
+  uint8_t spc[4];memcpy(spc,g_ram+GHOST_SPC_MIRROR,sizeof(spc));
   memcpy(g_ram,shot_ghost_ram,sizeof(shot_ghost_ram));
+  memcpy(g_ram+GHOST_SPC_MIRROR,spc,sizeof(spc));
   MmxWeaponsSetCombatState(shot_ghost.combat);MmxZeroSetState(shot_ghost.zero);
   MmxRendererRewindPieces(shot_ghost.pieces);MmxCoopViewsSetWorldState(&shot_ghost.world);
   state=shot_ghost_state;
@@ -1761,7 +1793,8 @@ static void camera_hook(CpuState *cpu,uint32_t pc) {
     /* Below the level's lowest camera position, as online views already
      * use: the screen bottom only moved because the shared camera was pulled
      * up (a capsule's camera lock), and scene_tick beams him over. */
-    if (p->status==MMX_COOP_ALIVE && (p->body[0x27]&127) &&
+    /* While a script holds the world actor, scene_tick beams him instead. */
+    if (p->status==MMX_COOP_ALIVE && (p->body[0x27]&127) && !world_scripted(g_ram) &&
         (int16_t)(word(p->body+8)-32-(word(g_ram+0x1e5c)+224))>=0) {
       TRACE(PIT,pc,state.anchor^1,0,cpu);
       ++p->body[0x30];p->body[0x2f]=8;p->body[0x26]=127;
