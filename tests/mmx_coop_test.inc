@@ -972,10 +972,14 @@ static void coop_launcher_checks(const char *root,const char *rom,const char *x3
     check(p->feature_resource_get(p->ctx,packages[i],features[i],0,&r) && !strcmp(r.path,x3),
         "co-op, exchange and X3 weapons share one source ROM selection");
   }
-  check(p->feature_enable(p->ctx,"megaman-x.character.zero","zero",1),"stage conflicting character mode");
-  check(!p->commit(p->ctx,rom) && p->diagnostic_count(p->ctx,"megaman-x.coop","coop")>0,
-      "launcher rejects simultaneous co-op and exchange");
-  check(p->feature_enable(p->ctx,"megaman-x.character.zero","zero",0),"disable exchange for co-op");
+  /* Features claiming the same trusted plugin are alternatives at selection
+   * time (snesrecomp 0fc01df): choosing one deselects the other. */
+  check(p->feature_enable(p->ctx,"megaman-x.character.zero","zero",1) &&
+      !snes_mod_runtime_feature_enabled_c("megaman-x.coop","coop"),
+      "selecting exchange deselects co-op");
+  check(p->feature_enable(p->ctx,"megaman-x.coop","coop",1) &&
+      !snes_mod_runtime_feature_enabled_c("megaman-x.character.zero","zero"),
+      "selecting co-op deselects exchange");
   for(unsigned character=0;character<2;++character) {
     check(p->feature_set_option(p->ctx,"megaman-x.coop","coop","player1",character?"zero":"x"),
         "launcher selects either P1 character");
