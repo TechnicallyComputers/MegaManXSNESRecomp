@@ -14,6 +14,7 @@ static uint8_t animation[MMX_ZERO_ANIMATION_BYTES];
 static uint8_t muzzle[MMX_ZERO_MUZZLE_BYTES];
 static MmxZeroState state;
 static const MmxZeroExtension *extension;
+static bool (*extension_gate)(void);
 _Static_assert(offsetof(MmxZeroState, anim_offset) == MMX_ZERO_LEGACY_STATE_SIZE,
                "Keep the v4 combat-state prefix readable");
 _Static_assert(offsetof(MmxZeroState, burst_offset) == MMX_ZERO_ANIMATION_STATE_SIZE,
@@ -35,15 +36,33 @@ void MmxZeroSetModern(bool enabled) { modern_behavior = enabled; }
 bool MmxZeroModern(void) { return MmxZeroActive() && modern_behavior; }
 void MmxZeroSetStartCharacter(bool x) { start_x = x; }
 void MmxZeroSetExtension(const MmxZeroExtension *ext) { extension = ext; }
+void MmxZeroSetExtensionGate(bool (*gate)(void)) { extension_gate = gate; }
+/* Per-frame and per-hit callbacks belong to the seat that owns the extension.
+ * Lifecycle callbacks (state_reset, collision_rom) are not seat-owned. */
+static const MmxZeroExtension *live_extension(void) {
+  return extension && (!extension_gate || extension_gate()) ? extension : NULL;
+}
 void MmxZeroExtPrePlayer(uint8_t *ram) {
-  if (extension && extension->pre_player) extension->pre_player(ram);
+  const MmxZeroExtension *ext = live_extension();
+  if (ext && ext->pre_player) ext->pre_player(ram);
 }
 void MmxZeroExtPlayerEnd(uint8_t *ram) {
-  if (extension && extension->player_end) extension->player_end(ram);
+  const MmxZeroExtension *ext = live_extension();
+  if (ext && ext->player_end) ext->player_end(ram);
 }
-void MmxZeroResetState(void) {
+void MmxZeroExtSaveState(uint8_t out[MMX_ZERO_EXTENSION_STATE_BYTES]) {
+  memset(out, 0, MMX_ZERO_EXTENSION_STATE_BYTES);
+  if (extension && extension->state_save) extension->state_save(out);
+}
+void MmxZeroExtLoadState(const uint8_t in[MMX_ZERO_EXTENSION_STATE_BYTES]) {
+  if (extension && extension->state_load) extension->state_load(in);
+}
+static void clear_state(void) {
   memset(&state, 0, sizeof(state)); state.active_x = start_x;
   state.modern.enabled = modern_behavior;
+}
+void MmxZeroResetState(void) {
+  clear_state();
   if (extension && extension->state_reset) extension->state_reset(NULL);
 }
 bool MmxZeroValidState(const MmxZeroState *value) {
@@ -64,8 +83,8 @@ bool MmxZeroValidState(const MmxZeroState *value) {
                         s.anim_timer && s.anim_pose < 117)) &&
       (!s.projectile || (s.projectile >= 0x1228 && s.projectile < 0x1428 && (s.projectile & 63) == 0x28));
 }
-void MmxZeroSetState(MmxZeroState s) {
-  MmxZeroResetState();
+static void assign_state(MmxZeroState s) {
+  clear_state();
   if (poses && MmxZeroValidState(&s)) state = s;
   if (state.modern.enabled != modern_behavior) {
     /* Old saves start with fresh aerial actions. A changed ruleset cannot
@@ -74,16 +93,21 @@ void MmxZeroSetState(MmxZeroState s) {
     memset(&state.modern, 0, sizeof(state.modern));
     state.modern.enabled = modern_behavior;
   }
+}
+void MmxZeroSetState(MmxZeroState s) {
+  assign_state(s);
   if (extension && extension->state_reset) extension->state_reset(NULL);
 }
+void MmxZeroSelectState(MmxZeroState s) { assign_state(s); }
 unsigned MmxZeroChargeTier(const MmxZeroState *s) {
   return !s || s->charge < 21 ? 0 : s->charge < 81 ? 4 :
          s->charge < 141 ? 6 : s->charge < 201 ? 8 : 10;
 }
 
 static unsigned legacy_charge_cap(void) {
-  if (extension && extension->charge_cap) {
-    unsigned cap = extension->charge_cap();
+  const MmxZeroExtension *ext = live_extension();
+  if (ext && ext->charge_cap) {
+    unsigned cap = ext->charge_cap();
     if (cap) return cap;
   }
   return 201;
@@ -272,11 +296,12 @@ unsigned MmxZeroMuzzle(const uint8_t r[0x20000], unsigned object,
    * positive X and sign-extend Y. Keep their later spread/trajectory offsets. */
   if (axis) {
     unsigned result = (unsigned)(uint8_t)(muzzle[120 + offset] - 8);
-    if (state.burst && extension && extension->burst_origin_y) {
+    const MmxZeroExtension *ext = live_extension();
+    if (state.burst && ext && ext->burst_origin_y) {
       int paired_y;
       unsigned other = state.burst == 1 ? 2 : 1;
       if (burst_emission_y(other, state.air, &paired_y))
-        result = (unsigned)(uint8_t)extension->burst_origin_y(
+        result = (unsigned)(uint8_t)ext->burst_origin_y(
             r, state.burst - 1, (int8_t)result, paired_y);
     }
     return result;
@@ -705,9 +730,10 @@ static MmxZeroLegacyIntent legacy_intent_from_mapped(const uint8_t *r) {
     (r[0xbe3] & 64) != 0,
     (r[0xbdf] & 64) == 0,
   };
-  if (extension && extension->legacy_intent) {
+  const MmxZeroExtension *ext = live_extension();
+  if (ext && ext->legacy_intent) {
     MmxZeroLegacyIntent override = intent;
-    if (extension->legacy_intent(r, &override)) intent = override;
+    if (ext->legacy_intent(r, &override)) intent = override;
   }
   return intent;
 }
@@ -766,8 +792,9 @@ void MmxZeroPlayerTick(uint8_t r[0x20000]) {
     else if (r[0xbaa] == 8) MmxZeroAnimationStart(0xba8,5 + r[0xc17]);
   }
   bool legacy_slash_started = false;
-  if (!state.slash && extension && extension->legacy_slash_request &&
-      extension->legacy_slash_request(r)) {
+  const MmxZeroExtension *ext = live_extension();
+  if (!state.slash && ext && ext->legacy_slash_request &&
+      ext->legacy_slash_request(r)) {
     state.burst = state.burst_end = 0;
     legacy_slash_started = start_slash(r);
   }
@@ -908,13 +935,15 @@ unsigned MmxZeroWeaponTick(uint8_t r[0x20000], unsigned d, unsigned active) {
     }
     value = 0; /* Our transient melee object has no native projectile update. */
   }
-  return extension && extension->weapon_tick ?
-      extension->weapon_tick(r, d, value) : value;
+  const MmxZeroExtension *ext = live_extension();
+  return ext && ext->weapon_tick ?
+      ext->weapon_tick(r, d, value) : value;
 }
 unsigned MmxZeroResponse(uint8_t *r, unsigned enemy, unsigned projectile,
                          unsigned original) {
-  return extension && extension->response ?
-      extension->response(r, enemy, projectile, original) : original;
+  const MmxZeroExtension *ext = live_extension();
+  return ext && ext->response ?
+      ext->response(r, enemy, projectile, original) : original;
 }
 unsigned MmxZeroDamage(uint8_t r[0x20000], unsigned enemy, unsigned projectile, unsigned original) {
   unsigned value = original;
@@ -927,14 +956,16 @@ unsigned MmxZeroDamage(uint8_t r[0x20000], unsigned enemy, unsigned projectile, 
       value = modern_behavior ? 3 : 16;
     }
   }
-  return extension && extension->damage ?
-      extension->damage(r, enemy, projectile, value) : value;
+  const MmxZeroExtension *ext = live_extension();
+  return ext && ext->damage ?
+      ext->damage(r, enemy, projectile, value) : value;
 }
 unsigned MmxZeroHitbox(const uint8_t r[0x20000], unsigned enemy, unsigned projectile, unsigned original) {
   unsigned value = original;
   if (poses && own_projectile(r, projectile) && projectile == state.projectile &&
       enemy >= 0xe68 && enemy < 0x1228 && (enemy & 63) == 0x28 &&
       (state.hit_slots & (1u << ((enemy - 0xe68) / 64)))) value = 0;
-  return extension && extension->hitbox ?
-      extension->hitbox(r, enemy, projectile, value) : value;
+  const MmxZeroExtension *ext = live_extension();
+  return ext && ext->hitbox ?
+      ext->hitbox(r, enemy, projectile, value) : value;
 }

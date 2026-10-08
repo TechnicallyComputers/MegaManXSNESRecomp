@@ -37,7 +37,13 @@ typedef struct MmxRenderPlayerOverlay {
   bool facing_left;
 } MmxRenderPlayerOverlay;
 
-typedef bool (*MmxRendererPlayerOverlayProvider)(MmxRenderPlayerOverlay *out);
+/* Called for each Zero body the renderer draws: the live seat at BeginFrame,
+ * and in co-op the partner seat at CoopFrame. `ram` holds that body at
+ * $0BA8 and `zero` is its seat's Zero state. */
+struct MmxZeroState;
+typedef bool (*MmxRendererPlayerOverlayProvider)(
+    const uint8_t *ram, const struct MmxZeroState *zero,
+    MmxRenderPlayerOverlay *out);
 
 void MmxRendererSetPlayerOverlayProvider(
     MmxRendererPlayerOverlayProvider provider);

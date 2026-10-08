@@ -6,9 +6,14 @@
 #include "mmx_saber_input.h"
 #include "mmx_saber_priority.h"
 #include "mmx_saber_wave_runtime.h"
+#include "mmx_saber_state.h"
+
+#include <string.h>
 
 static bool release_pending;
 static bool previous_y;
+static bool previous_x;
+static MmxSaberFramePadSource pad_source;
 static MmxZeroLegacyIntent frame_intent;
 static bool frame_computed;
 static bool frame_override;
@@ -34,6 +39,7 @@ static void state_reset(uint8_t *ram) {
   MmxSaberAttackResetCueCount();
   release_pending = false;
   previous_y = false;
+  previous_x = false;
   clear_frame_state();
 }
 
@@ -53,10 +59,28 @@ static bool zero_frame_context(const uint8_t *ram) {
       ram[0x1f10] < 6 && ram[0xbbe] != 0x6b && ram[0xbaa] != 0x2c;
 }
 
-static MmxSaberPhysicalPad read_physical_pad(const uint8_t *ram) {
-  const bool x_held = (ram[0x00a7] & 0x40) != 0;
-  const bool x_previous = (ram[0x00a9] & 0x40) != 0;
-  const bool y_held = (ram[0x00ac] & 0x40) != 0;
+void MmxSaberFrameSetPadSource(MmxSaberFramePadSource source) {
+  pad_source = source;
+}
+
+static MmxSaberFramePad sample_pad(const uint8_t *ram) {
+  MmxSaberFramePad pad = {false, false};
+  if (!ram) return pad;
+  if (pad_source) {
+    pad_source(ram, &pad);
+    return pad;
+  }
+  pad.x_held = (ram[0x00a7] & 0x40) != 0;
+  pad.y_pressed = (ram[0x00ac] & 0x40) != 0;
+  return pad;
+}
+
+static MmxSaberPhysicalPad read_physical_pad(const uint8_t *ram,
+                                             MmxSaberFramePad pad) {
+  const bool x_held = pad.x_held;
+  const bool x_previous = pad_source ? previous_x :
+      (ram[0x00a9] & 0x40) != 0;
+  const bool y_held = pad.y_pressed;
   uint16_t buttons = 0;
   uint16_t previous = 0;
   if (x_held) buttons |= MMX_SABER_PAD_X;
@@ -161,6 +185,7 @@ static void pre_player(uint8_t *ram) {
   MmxSaberPadSaber pre_native_saber;
   MmxSaberPadZero zero;
   MmxSaberPhysicalPad physical;
+  MmxSaberFramePad pad;
 
   MmxSaberHitboxDebugSetRam(ram);
   frame_ram = ram;
@@ -175,11 +200,14 @@ static void pre_player(uint8_t *ram) {
     MmxSaberComboCancel(ram);
     MmxSaberAttackResetRam(ram);
     release_pending = false;
-    previous_y = ram && (ram[0x00ac] & 0x40) != 0;
+    pad = sample_pad(ram);
+    previous_y = pad.y_pressed;
+    previous_x = pad.x_held;
     return;
   }
 
-  physical = read_physical_pad(ram);
+  pad = sample_pad(ram);
+  physical = read_physical_pad(ram, pad);
   saber = MmxSaberAttackPadState(release_pending);
   pre_native_saber = saber;
   MmxSaberAttackObservePreNative(ram);
@@ -233,6 +261,7 @@ static void pre_player(uint8_t *ram) {
   frame_computed = true;
   release_pending = out.release_pending;
   previous_y = (physical.buttons & MMX_SABER_PAD_Y) != 0;
+  previous_x = pad.x_held;
   last_wrote_input = true;
 }
 
@@ -249,6 +278,64 @@ static int burst_origin_y(const uint8_t *ram, unsigned shot_index,
   return shot_index == 0 ? paired_y : native_y;
 }
 
+/* "SABR" + layout version, then the frame's own fields and each module's
+ * snapshot in a fixed order. A blob without this header leaves the reset
+ * state that MmxZeroSetState already established. */
+enum { SABER_STATE_MAGIC = 0x52424153u, SABER_STATE_VERSION = 1u };
+typedef struct SaberFrameSavedState {
+  uint32_t magic, version;
+  bool release_pending, previous_y, previous_x;
+} SaberFrameSavedState;
+
+static size_t saved_state_size(void) {
+  return sizeof(SaberFrameSavedState) + MmxSaberAttackStateSize() +
+      MmxSaberComboStateSize() + MmxSaberPriorityStateSize() +
+      MmxSaberWaveRuntimeStateSize();
+}
+
+static void state_save(uint8_t out[]) {
+  SaberFrameSavedState frame;
+  uint8_t *cursor = out;
+  if (saved_state_size() > MMX_ZERO_EXTENSION_STATE_BYTES) return;
+  memset(&frame, 0, sizeof(frame));
+  frame.magic = SABER_STATE_MAGIC;
+  frame.version = SABER_STATE_VERSION;
+  frame.release_pending = release_pending;
+  frame.previous_y = previous_y;
+  frame.previous_x = previous_x;
+  memcpy(cursor, &frame, sizeof(frame));
+  cursor += sizeof(frame);
+  MmxSaberAttackStateSave(cursor);
+  cursor += MmxSaberAttackStateSize();
+  MmxSaberComboStateSave(cursor);
+  cursor += MmxSaberComboStateSize();
+  MmxSaberPriorityStateSave(cursor);
+  cursor += MmxSaberPriorityStateSize();
+  MmxSaberWaveRuntimeStateSave(cursor);
+}
+
+static void state_load(const uint8_t in[]) {
+  SaberFrameSavedState frame;
+  const uint8_t *cursor = in;
+  memcpy(&frame, cursor, sizeof(frame));
+  if (frame.magic != SABER_STATE_MAGIC ||
+      frame.version != SABER_STATE_VERSION ||
+      saved_state_size() > MMX_ZERO_EXTENSION_STATE_BYTES)
+    return;
+  cursor += sizeof(frame);
+  release_pending = frame.release_pending;
+  previous_y = frame.previous_y;
+  previous_x = frame.previous_x;
+  clear_frame_state();
+  MmxSaberAttackStateLoad(cursor);
+  cursor += MmxSaberAttackStateSize();
+  MmxSaberComboStateLoad(cursor);
+  cursor += MmxSaberComboStateSize();
+  MmxSaberPriorityStateLoad(cursor);
+  cursor += MmxSaberPriorityStateSize();
+  MmxSaberWaveRuntimeStateLoad(cursor);
+}
+
 static const MmxZeroExtension extension = {
     .pre_player = pre_player,
     .player_end = player_end,
@@ -262,6 +349,8 @@ static const MmxZeroExtension extension = {
     .hitbox = MmxSaberAttackHitbox,
     .collision_rom = MmxSaberAttackCollisionRom,
     .state_reset = state_reset,
+    .state_save = state_save,
+    .state_load = state_load,
 };
 
 const MmxZeroExtension *MmxSaberFrameExtension(void) {

@@ -9,6 +9,7 @@
 #include "mmx_source_assets.h"
 #include "mmx_coop.h"
 #include "mmx_coop_view.h"
+#include "saber/mmx_saber_plugin.h"
 #include "sdl_compat.h"
 #include <stdio.h>
 #include <string.h>
@@ -221,9 +222,6 @@ static void activate(void) {
   /* Co-op claims this existing plugin as its character-mode exclusion key.
    * Its dedicated activation below owns preparation in that mode. */
   if(snes_mod_runtime_feature_enabled_c("megaman-x.coop","coop")) return;
-  /* An alternate character package claims this existing plugin as its
-   * character-mode exclusion key; its dedicated activation owns preparation. */
-  if(snes_mod_runtime_feature_enabled_c("megaman-x.character.saber-zero","saber-zero")) return;
   char path[4096],start[16]={0},behavior[16]={0};
   if (!prepare("megaman-x.character.zero","zero",3,1,path)) return;
   snes_mod_runtime_feature_option_value_c("megaman-x.character.zero","zero","start",start,sizeof(start));
@@ -235,6 +233,7 @@ static void activate(void) {
     fprintf(stderr, "[mmx-zero] Cannot load extracted Zero assets: %s\n", path); return;
   }
   MmxZeroRegisterHooks();
+  if (!strcmp(behavior,"saber")) MmxSaberActivate("megaman-x.character.zero","zero",false);
   fprintf(stderr, "[mmx-zero] Zero 0.0.1 enabled; starting as %s\n", strcmp(start,"zero") ? "X" : "Zero");
 }
 static void activate_coop(void) {
@@ -253,6 +252,7 @@ static void activate_coop(void) {
     SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR,"Cannot enable co-op","Cannot initialize the selected characters.",NULL);
     return;
   }
+  if(!strcmp(behavior,"saber")) MmxSaberActivate("megaman-x.coop","coop",true);
   fprintf(stderr,"[mmx-coop] Co-op enabled; P1 is %s\n",p1==MMX_COOP_X?"X":"Zero");
 }
 static void activate_weapons(unsigned game) {

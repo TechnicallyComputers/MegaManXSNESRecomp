@@ -83,7 +83,10 @@ static uint32_t checksum_region(const uint32_t *pixels) {
   return checksum;
 }
 
-static bool provide_overlay(MmxRenderPlayerOverlay *out) {
+static bool provide_overlay(const uint8_t *ram, const MmxZeroState *zero,
+                            MmxRenderPlayerOverlay *out) {
+  (void)ram;
+  (void)zero;
   *out = provider_overlay;
   return true;
 }

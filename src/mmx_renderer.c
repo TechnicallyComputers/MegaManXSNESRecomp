@@ -78,6 +78,8 @@ static size_t rom_size;
 static MmxRenderStats stats;
 static MmxRendererPlayerOverlayProvider player_overlay_provider;
 static MmxRenderPlayerOverlay frame_player_overlay;
+/* The co-op partner seat's Zero, drawn from partner_ram rather than OAM. */
+static MmxRenderPlayerOverlay frame_partner_overlay;
 enum { MAX_WORLD_SPRITES = 8 };
 static MmxRendererWorldSpriteProvider world_sprite_provider;
 static MmxRenderWorldSprite frame_world_sprites[MAX_WORLD_SPRITES];
@@ -156,7 +158,10 @@ void MmxRendererSetRom(const uint8_t *bytes, size_t length) {
 void MmxRendererSetPlayerOverlayProvider(
     MmxRendererPlayerOverlayProvider provider) {
   player_overlay_provider = provider;
-  if (!provider) memset(&frame_player_overlay, 0, sizeof(frame_player_overlay));
+  if (!provider) {
+    memset(&frame_player_overlay, 0, sizeof(frame_player_overlay));
+    memset(&frame_partner_overlay, 0, sizeof(frame_partner_overlay));
+  }
 }
 MmxRenderPlayerOverlay MmxRendererPlayerOverlaySnapshot(void) {
   return frame_player_overlay;
@@ -186,6 +191,7 @@ unsigned MmxRendererDebugRectSnapshot(MmxRenderDebugRect *out,
 void MmxRendererReset(void) {
   memset(&frame_zero, 0, sizeof(frame_zero));
   memset(&frame_player_overlay, 0, sizeof(frame_player_overlay));
+  memset(&frame_partner_overlay, 0, sizeof(frame_partner_overlay));
   reset_pilot_overlay_alignment();
   frame_world_sprite_count = 0;
   frame_debug_rect_count = 0;
@@ -385,8 +391,10 @@ void MmxRendererBeginFrame(const uint8_t ram[0x20000]) {
   unsigned debug_rect_count = 0;
   reset_pilot_overlay_alignment();
   memset(&frame_coop,0,sizeof(frame_coop));
+  memset(&frame_partner_overlay, 0, sizeof(frame_partner_overlay));
   memset(&overlay, 0, sizeof(overlay));
-  if (player_overlay_provider && player_overlay_provider(&overlay))
+  MmxZeroState live_zero = MmxZeroGetState();
+  if (player_overlay_provider && player_overlay_provider(ram, &live_zero, &overlay))
     frame_player_overlay = overlay;
   else
     memset(&frame_player_overlay, 0, sizeof(frame_player_overlay));
@@ -643,11 +651,25 @@ void MmxRendererCoopFrame(const MmxCoopState *s) {
     const MmxCoopPlayer *owner=&s->players[s->menu_last];
     frame_zero=owner->zero;frame_weapons=owner->weapons;frame_weapon_combat=owner->combat;
     memcpy(frame.ram+0xba8,owner->body,sizeof(owner->body));
+    /* The menu shows its owner's body, which need not be the live seat's. */
+    MmxRenderPlayerOverlay overlay;
+    memset(&overlay,0,sizeof(overlay));
+    if (player_overlay_provider && player_overlay_provider(frame.ram,&frame_zero,&overlay))
+      frame_player_overlay=overlay;
+    else memset(&frame_player_overlay,0,sizeof(frame_player_overlay));
   }
   memcpy(partner_ram,frame.ram,sizeof(partner_ram));
   memcpy(partner_ram+0xba8,s->players[s->current^1].body,sizeof(s->players[s->current^1].body));
   memcpy(partner_ram+0xc38,s->players[s->current^1].auxiliaries,sizeof(s->players[s->current^1].auxiliaries));
   memcpy(partner_ram+0x1228,s->players[s->current^1].shots,sizeof(s->players[s->current^1].shots));
+  const MmxCoopPlayer *partner=&s->players[s->current^1];
+  memset(&frame_partner_overlay,0,sizeof(frame_partner_overlay));
+  if (!menu && partner->character==MMX_COOP_ZERO && player_overlay_provider) {
+    MmxRenderPlayerOverlay overlay;
+    memset(&overlay,0,sizeof(overlay));
+    if (player_overlay_provider(partner_ram,&partner->zero,&overlay))
+      frame_partner_overlay=overlay;
+  }
 }
 bool MmxRendererSaveCapture(const char *path) {
   if (!frame.valid || !path) return false;
@@ -1322,6 +1344,22 @@ static void prepare_partner_graphics(void) {
     for(unsigned i=0;i<size;i+=2) partner_raster.vram[dest+i/2]=(uint16_t)word(bytes,i);
   }
 }
+static void player_overlay_plane_row(
+    const MmxRenderPlayerOverlayPlane *plane, const uint16_t *palette,
+    unsigned palette_count, int y, int zx, int zy, bool mirror, unsigned z,
+    MmxRenderView view, uint16_t *objects, int *object_colors);
+static void player_overlay_row(const MmxRenderPlayerOverlay *overlay, int y,
+                               int zx, int zy, unsigned z, MmxRenderView view,
+                               uint16_t *objects, int *object_colors) {
+  if (overlay->blade_layer == 1)
+    player_overlay_plane_row(&overlay->blade, overlay->palette, overlay->palette_count,
+        y, zx, zy, overlay->facing_left, z, view, objects, object_colors);
+  player_overlay_plane_row(&overlay->body, overlay->palette, overlay->palette_count,
+      y, zx, zy, overlay->facing_left, z, view, objects, object_colors);
+  if (overlay->blade_layer == 2)
+    player_overlay_plane_row(&overlay->blade, overlay->palette, overlay->palette_count,
+        y, zx, zy, overlay->facing_left, z, view, objects, object_colors);
+}
 static void coop_partner_row(const Ppu *ppu,const Raster *r,int y,MmxRenderView view,
                              uint16_t *objects,int *colors) {
   const MmxCoopPlayer *partner = &frame_coop.players[frame_coop.current^1];
@@ -1373,7 +1411,11 @@ static void coop_partner_row(const Ppu *ppu,const Raster *r,int y,MmxRenderView 
     }
     int row = y-sy+64;
     unsigned priority = ((ram[0xbb9]>>4 & 3)*4+2)<<12;
-    if (body && row>=0 && row<128 && (!pilot || (row>=44 && row<64))) for (int col=0;col<128;++col) {
+    /* A Saber attack replaces the body; the partner's Ride Armor pilot keeps
+     * the native cockpit art, which has no OAM here to align the sheet to. */
+    bool overlay = frame_partner_overlay.active && !pilot && !cast;
+    if (overlay) player_overlay_row(&frame_partner_overlay,y,x,sy,priority|0x680,view,objects,colors);
+    if (!overlay && body && row>=0 && row<128 && (!pilot || (row>=44 && row<64))) for (int col=0;col<128;++col) {
       unsigned pixel = body[row*128+col];
       if (blade && blade[row*128+col]) pixel = blade[row*128+col];
       int dest = x + ((ram[0xbb9]&64) ? 63-col : col-64) + view.extra;
@@ -1831,20 +1873,8 @@ bool MmxRendererDraw(uint32_t *out, MmxRenderView view, bool hud) {
               align_wide_pilot_overlay(&frame_player_overlay, s.animation,
                                        &zx, &zy);
             unsigned z = ((((s.attr >> 12) & 3) * 4 + 2) << 12) | 0x680;
-            if (frame_player_overlay.blade_layer == 1)
-              player_overlay_plane_row(&frame_player_overlay.blade,
-                  frame_player_overlay.palette, frame_player_overlay.palette_count,
-                  y, zx, zy, frame_player_overlay.facing_left, z, view,
-                  objects, object_colors);
-            player_overlay_plane_row(&frame_player_overlay.body,
-                frame_player_overlay.palette, frame_player_overlay.palette_count,
-                y, zx, zy, frame_player_overlay.facing_left, z, view,
-                objects, object_colors);
-            if (frame_player_overlay.blade_layer == 2)
-              player_overlay_plane_row(&frame_player_overlay.blade,
-                  frame_player_overlay.palette, frame_player_overlay.palette_count,
-                  y, zx, zy, frame_player_overlay.facing_left, z, view,
-                  objects, object_colors);
+            player_overlay_row(&frame_player_overlay, y, zx, zy, z, view,
+                               objects, object_colors);
           }
           int row = y - zy + 64;
           if (!player_overlay && row >= 0 && row < MMX_ZERO_HEIGHT && (!pilot || (row>=44 && row<64))) {

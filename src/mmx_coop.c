@@ -331,11 +331,22 @@ void MmxCoopReset(void) {
     MmxZeroSetState(z);
   }
 }
+/* A Zero extension (Saber) belongs to Zero's seat. X's controller pass and a
+ * ghost replay, whose RAM is rolled back afterwards, must not advance it. */
+static bool ghost_active(void);
+static bool zero_seat_owns_extension(void) {
+  return !enabled || !state.initialized || (!ghost_active() && MmxZeroActive());
+}
 bool MmxCoopEnable(unsigned character) {
   if (character > MMX_COOP_ZERO || !MmxZeroEnabled()) return false;
-  starting_character = character; enabled = true; MmxCoopReset(); return true;
+  starting_character = character; enabled = true; MmxCoopReset();
+  MmxZeroSetExtensionGate(zero_seat_owns_extension);
+  return true;
 }
-void MmxCoopDisable(void) { enabled = false; starting_character = 0; MmxCoopReset(); }
+void MmxCoopDisable(void) {
+  enabled = false; starting_character = 0; MmxCoopReset();
+  MmxZeroSetExtensionGate(NULL);
+}
 MmxCoopState MmxCoopGetState(void) { return state; }
 bool MmxCoopValidState(const MmxCoopState *s) {
   if (!s || s->initialized > 1 || s->current > 1 || s->controller_pass > 2 ||
@@ -406,7 +417,7 @@ bool MmxCoopSelect(uint8_t *r, unsigned player) {
   memcpy(r + 0x1228, p->shots, sizeof(p->shots));
   for (unsigned n = 0; n < 16; ++n)
     r[0x1f87 + n] = p->energy[n] | ((n & 1) ? r[0x1f87 + n] & 0xc0 : 0);
-  MmxZeroSetState(p->zero);
+  MmxZeroSelectState(p->zero);
   MmxWeaponsSetState(p->weapons);
   MmxWeaponsSetCombatState(p->combat);
   MmxWeaponsPartnerCombat(&state.players[player^1].combat);
@@ -581,6 +592,13 @@ void MmxCoopPoll(uint16_t p1, uint16_t p2) {
     state.players[i].pressed = inputs[i] & ~state.players[i].input;
     state.players[i].input = inputs[i];
   }
+}
+void MmxCoopSeatButtons(bool *x_held, bool *y_pressed) {
+  /* Seat input bit n is joypad bit 15-n: Y is bit 1 and X is bit 9. */
+  const MmxCoopPlayer *p = &state.players[state.current];
+  bool live = enabled && state.initialized;
+  if (x_held) *x_held = live && (p->input & (1u << 9));
+  if (y_pressed) *y_pressed = live && (p->pressed & (1u << 1));
 }
 void MmxCoopApplyInput(uint8_t *r) {
   if (!enabled || !state.initialized || !r) return;
@@ -1582,7 +1600,7 @@ static void shot_ghost_end(CpuState *cpu,uint32_t pc) {
   uint8_t spc[4];memcpy(spc,g_ram+GHOST_SPC_MIRROR,sizeof(spc));
   memcpy(g_ram,shot_ghost_ram,sizeof(shot_ghost_ram));
   memcpy(g_ram+GHOST_SPC_MIRROR,spc,sizeof(spc));
-  MmxWeaponsSetCombatState(shot_ghost.combat);MmxZeroSetState(shot_ghost.zero);
+  MmxWeaponsSetCombatState(shot_ghost.combat);MmxZeroSelectState(shot_ghost.zero);
   MmxRendererRewindPieces(shot_ghost.pieces);MmxCoopViewsSetWorldState(&shot_ghost.world);
   state=shot_ghost_state;
   memcpy(&lift,shot_ghost_lift,sizeof(lift));memcpy(&cart,shot_ghost_cart,sizeof(cart));
