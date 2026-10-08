@@ -344,7 +344,7 @@ bool MmxCoopValidState(const MmxCoopState *s) {
       s->select_hold>180 || s->select_armed>1 || s->stage_pending>2 || /* Accept older 3-second hold saves. */
       s->menu_owner>2 || s->menu_last>1 || s->p1_select_hold>90 || s->p1_select_armed>1 ||
       s->pickup_pass>2 || s->pickup_reserved[0] || s->pickup_reserved[1] || s->pickup_reserved[2] ||
-      s->anchor>1 || s->solo_death[0]>1 || s->solo_death[1]>1 || s->death_reserved ||
+      s->anchor>1 || s->solo_death[0]>1 || s->solo_death[1]>1 || s->respawn_pending>3 ||
       s->scene_owner>2 || s->scene_phase>3 || s->door_pass>2 || s->scene_reserved || s->slime_p2>255 ||
       (s->scene_phase && !s->scene_owner) ||
       (s->door_pass && s->door_entry!=0xe70d && s->door_entry!=0xec98 && s->door_entry!=0xc0ae)) return false;
@@ -502,7 +502,7 @@ bool MmxCoopFrameTick(uint8_t *r) {
     MmxWeaponsSetState(weapons);
     MmxCoopCapture(r);state.stage=r[0x1f7a];state.players[0].status=MMX_COOP_ALIVE;
     memset(state.pickup_owner,0,sizeof(state.pickup_owner));state.pickup_pass=0;
-    memset(state.solo_death,0,sizeof(state.solo_death));
+    memset(state.solo_death,0,sizeof(state.solo_death));state.respawn_pending=0;
     state.scene_owner=state.scene_phase=state.door_pass=0;
     MmxCoopPlayer *p=&state.players[1];p->status=MMX_COOP_ABSENT;
     /* Match native P1's buster reset, for X1 and imported selections alike.
@@ -717,6 +717,19 @@ static bool teleport_tick(uint8_t *r,MmxCoopPlayer *p) {
 static bool world_scripted(const uint8_t *r) {
   const uint8_t *world=state.anchor==state.current ? r+0xba8 : state.players[state.anchor].body;
   return world[0x6e]!=0;
+}
+/* A boss or miniboss fight: $1F0E holds the boss whose health meter the HUD
+ * draws ($80:DA0E; each boss stores its own slot there), and the encounter
+ * classes cover intros before the meter appears and minibosses, which have
+ * none. Velguarder ($26) and Vile ($67/$69) are the boss bodies themselves. */
+static bool boss_fight(const uint8_t *r) {
+  if(word(r+0x1f0e)) return true;
+  for(unsigned d=0xe68;d<0x1228;d+=64) {
+    unsigned c=r[d+10];
+    if(r[d] && (MmxWidePolicy_IsBossEncounter((uint8_t)c) || c==0x26 || c==0x67 ||
+        c==0x69 || c==0x01 /* Sting Chameleon's miniboss, $83:AE81 */)) return true;
+  }
+  return false;
 }
 /* Solid terrain somewhere between the body and the level's lowest camera
  * position: falling off the bottom of the screen there is not a pit. */
@@ -1235,6 +1248,30 @@ static bool living_on_screen(const uint8_t *r,unsigned seat) {
   return p->status==MMX_COOP_ALIVE && (b[0x27]&127) && b[2]!=12 &&
       !p->zero.swap_phase && x+12>0 && x-12<256 && y+16>0 && y+16-height<224;
 }
+/* A fallen player's Select asks to return beside the partner for one of the
+ * team's spare lives ($1F80: $80:9B43 spends one per checkpoint restart, the
+ * 1-up adds one at $81:E4B3). Never during a boss or miniboss fight. The
+ * request waits for both that and a spare life, so a 1-up collected while
+ * none were left brings him straight back. */
+static bool respawn_tick(uint8_t *r,unsigned seat) {
+  MmxCoopPlayer *p=&state.players[seat];
+  unsigned bit=1u<<seat;
+  bool ready=living_on_screen(r,seat^1) && r[0x1f80] && !boss_fight(r);
+  if(p->pressed&4) {
+    state.respawn_pending|=(uint8_t)bit;
+    if(!ready) sound(r,0x74); /* $00:F1E4 password rejection: queued, not yet. */
+  }
+  if(!(state.respawn_pending&bit) || !ready) return false;
+  MmxCoopSelect(r,seat^1);
+  uint16_t x,y;
+  if(!MmxCoopFindLanding(r,&x,&y)) return false;
+  place_other(r,x,y,false); /* full HP and the buster; inventory is kept */
+  --r[0x1f80];state.respawn_pending&=(uint8_t)~bit;
+  MmxZeroState *z=&p->zero;z->swap_phase=4;z->swap_y=(int16_t)(word(r+0x1e50)-(int)y-40);
+  z->swap_tick=z->swap_fraction=0;
+  state.select_armed=state.select_hold=state.p1_select_armed=state.p1_select_hold=0;
+  sound(r,0x0e);r[0xb9d]=r[0xba0]=0;return true;
+}
 static bool join_tick(uint8_t *r) {
   for(unsigned seat=0;seat<2;++seat) {
     MmxCoopPlayer *p=&state.players[seat];
@@ -1262,7 +1299,8 @@ static bool join_tick(uint8_t *r) {
     uint8_t *hold=seat ? &state.select_hold : &state.p1_select_hold;
     uint8_t *armed=seat ? &state.select_armed : &state.p1_select_armed;
     if (!(p->input&4)) {*armed=1;*hold=0;}
-    if (p->status==MMX_COOP_FALLEN || !living_on_screen(r,seat^1)) {*hold=0;continue;}
+    if (p->status==MMX_COOP_FALLEN) {*hold=0;if(respawn_tick(r,seat)) return true;continue;}
+    if (!living_on_screen(r,seat^1)) {*hold=0;continue;}
     if (p->status==MMX_COOP_ALIVE) {
       /* An occupied armor still updates through its pilot's projected body.
        * Do not hide that body or hand control away during a voluntary exit. */

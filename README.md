@@ -112,8 +112,10 @@ For couch co-op, assign a controller or keyboard to each player. For netplay,
 configure your local **Player 1** controls; the lobby assigns your game seat.
 
 P2 joins automatically at a safe stage entrance in co-op. Hold P2 **Select**
-for 1.5 seconds to withdraw, and tap it to rejoin. A player who dies remains out
-until the next stage or a team restart.
+for 1.5 seconds to withdraw, and tap it to rejoin. A player who dies can tap
+**Select** to respawn beside the partner for one of the team's lives. Respawns
+are not available during boss or miniboss fights; the request waits until the
+fight is over, or until a 1-up is collected if no lives are left.
 
 Reopen the launcher during play with **Ctrl+L** or controller **Select+L3**.
 Configure system shortcuts in **Hotkeys**. **F7** opens the save-state browser
