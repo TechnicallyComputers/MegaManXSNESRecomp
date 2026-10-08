@@ -112,8 +112,10 @@ For couch co-op, assign a controller or keyboard to each player. For netplay,
 configure your local **Player 1** controls; the lobby assigns your game seat.
 
 P2 joins automatically at a safe stage entrance in co-op. Hold P2 **Select**
-for 1.5 seconds to withdraw, and tap it to rejoin. A player who dies remains out
-until the next stage or a team restart.
+for 1.5 seconds to withdraw, and tap it to rejoin. A player who dies can tap
+**Select** to respawn beside the partner for one of the team's lives. Respawns
+are not available during boss or miniboss fights; the request waits until the
+fight is over, or until a 1-up is collected if no lives are left.
 
 Reopen the launcher during play with **Ctrl+L** or controller **Select+L3**.
 Configure system shortcuts in **Hotkeys**. **F7** opens the save-state browser
@@ -138,10 +140,11 @@ through STUN or through TURN, and any stalls); attach it with the log. The
 file is replaced by the next match.
 
 For intermittent co-op collision problems, tick **Co-op physics diagnostics**
-under **Mods > Developer**, then play normally. Attach `logs/coop-physics-*.csv`
-and its `.previous.csv` companion if present. During netplay the same mod also
-writes `logs/coop-netplay-*.csv` with the same name stem; attach that too, from
-both players if possible. This extra tracing is off by default.
+under **Mods > Developer**, then play normally. The trace is written in 32 MiB
+numbered segments (`logs/coop-physics-<start time>-<pid>-<n>-001.csv`, `-002.csv`,
+...); the newest 32 are kept. Attach every segment of the session. During netplay
+the same mod also writes `logs/coop-netplay-*` segments with the same name stem;
+attach those too, from both players if possible. This extra tracing is off by default.
 
 <details>
 <summary>Building from source and technical details</summary>

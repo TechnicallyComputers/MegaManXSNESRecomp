@@ -221,7 +221,16 @@ Mode 6 omits controller polling and pause handling, so suppress that change
 when another player is alive. The surviving seat becomes the native world
 anchor: enemy/pickup passes, camera, menus and draw submission restore it.
 P2 cannot voluntarily withdraw while P1 is fallen, because that would leave
-no living player to advance the stage. Select never revives a fallen seat.
+no living player to advance the stage.
+
+Amended 2026-10-07: Select now revives a fallen seat for one spare life
+(`$1F80`; the death path spends it at `$80:9B43`, the 1-up adds it at
+`$81:E4B3`). `respawn_tick` places him beside the living partner with the
+join teleport, at full HP with the buster. The request (`respawn_pending`,
+formerly `death_reserved`) waits while the team has no spare life, so a
+collected 1-up revives him at once, and while `boss_fight` holds: the boss
+health meter pointer `$1F0E` is set, or a boss/miniboss encounter class is
+live. Minibosses are listed by class, and that list is incomplete.
 
 When the last survivor dies, retain X1's original stage mode 6, life decrement
 and checkpoint. Simultaneous fatalities use one death controller and spend
