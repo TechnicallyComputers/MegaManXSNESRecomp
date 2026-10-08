@@ -10,6 +10,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+bool MmxKncBugfixActive(unsigned seat) { (void)seat;return false; }
+unsigned MmxKncBugfixPhase(void) { return 0; }
+
 #ifndef MMX_SABER_RENDER_CACHE_DIR
 #define MMX_SABER_RENDER_CACHE_DIR ""
 #endif
