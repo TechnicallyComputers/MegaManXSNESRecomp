@@ -943,6 +943,9 @@ static struct {
 static struct {
   uint8_t pass,first,original,p,db,rp,rdb;uint16_t d,s,a,x,y,ra,rx,ry;
 } elevator_move;
+static struct {
+  uint8_t pass,first,entry_2c,first_rode,p,db,rp,rdb;uint16_t d,s,a,x,y,ra,rx,ry;
+} slab_drop;
 static uint32_t lift_stack_ret(const CpuState *cpu) {
   return cpu->S<0x1ffd ? (uint32_t)(g_ram[cpu->S+1]|g_ram[cpu->S+2]<<8|g_ram[cpu->S+3]<<16) : 0;
 }
@@ -974,7 +977,7 @@ static bool lift_elevator(unsigned d) {
 }
 static void laser_reset(void);
 static void lift_reset(void) {
-  lift.pass=0;lift.carry=0;cart.ready=false;cart.pass=0;elevator_move.pass=0;laser_reset();
+  lift.pass=0;lift.carry=0;cart.ready=false;cart.pass=0;elevator_move.pass=0;slab_drop.pass=0;laser_reset();
 }
 static void lift_close(void) {
   if(lift.pass==2) MmxCoopSelect(g_ram,lift.first);
@@ -1058,6 +1061,47 @@ static void kuwanger_carry_hook(CpuState *cpu,uint32_t pc) {
     cpu->P=elevator_move.rp;cpu->DB=elevator_move.rdb;cpu_p_to_mirrors(cpu);
   }
   elevator_move.pass=0;
+}
+
+/* Highway's falling slab (item $08) starts its fall in a one-frame state
+ * ($82:E62A). Its $E64E..E666 block reads the world body directly: a body on
+ * the ground ($0BD3 bit 2) is moved down 2 px with the slab, gets $0BD4 bit 2,
+ * and is latched as a rider (INC .2C), so $84:AB81 carries it a tick longer
+ * before it falls free. Only the anchor ever saw that block, so the partner
+ * left the road a tick early, fell a few px ahead, and reached the slab five
+ * ticks before X (MMX netplay log 2026-10-09: X's jump, pressed on his
+ * native landing frame, was dropped while P2's was not). Replay the block for
+ * the partner with its own body, as native code, and keep each seat's latch
+ * as its .2C bit for platform_hook. */
+static void slab_drop_hook(CpuState *cpu,uint32_t pc) {
+  unsigned d=cpu->D;
+  if(!enabled || !state.initialized || state.menu_owner || state.scene_owner ||
+      d<0x1628 || d>=0x1928 || (d-0x1628)%48 || !g_ram[d] || g_ram[d+10]!=0x08) return;
+  if((pc&65535)==0xe64e) {
+    if(slab_drop.pass || state.players[state.current^1].status!=MMX_COOP_ALIVE ||
+        !(state.players[state.current^1].body[0x27]&127)) return;
+    cpu_mirrors_to_p(cpu);
+    slab_drop.pass=1;slab_drop.first=state.current;slab_drop.d=(uint16_t)d;slab_drop.s=cpu->S;
+    slab_drop.a=cpu->A;slab_drop.x=cpu->X;slab_drop.y=cpu->Y;slab_drop.p=cpu->P;slab_drop.db=cpu->DB;
+    slab_drop.entry_2c=g_ram[d+0x2c];return;
+  }
+  if(!slab_drop.pass || slab_drop.d!=d || slab_drop.s!=cpu->S) return;
+  if(slab_drop.pass==1) {
+    slab_drop.first_rode=g_ram[d+0x2c]!=slab_drop.entry_2c;
+    cpu_mirrors_to_p(cpu);
+    slab_drop.ra=cpu->A;slab_drop.rx=cpu->X;slab_drop.ry=cpu->Y;slab_drop.rp=cpu->P;slab_drop.rdb=cpu->DB;
+    MmxCoopSelect(g_ram,slab_drop.first^1);slab_drop.pass=2;g_ram[d+0x2c]=slab_drop.entry_2c;
+    cpu->A=slab_drop.a;cpu->X=slab_drop.x;cpu->Y=slab_drop.y;cpu->P=slab_drop.p;cpu->DB=slab_drop.db;
+    cpu_p_to_mirrors(cpu);
+    interp_bridge_pre_opcode_redirect(0x82e64e);return;
+  }
+  bool second_rode=g_ram[d+0x2c]!=slab_drop.entry_2c;
+  g_ram[d+0x2c]=(uint8_t)((slab_drop.entry_2c&~3u)|(slab_drop.first_rode?1u<<slab_drop.first:0)|
+                          (second_rode?1u<<(slab_drop.first^1):0));
+  MmxCoopSelect(g_ram,slab_drop.first);
+  cpu->A=slab_drop.ra;cpu->X=slab_drop.rx;cpu->Y=slab_drop.ry;cpu->P=slab_drop.rp;cpu->DB=slab_drop.rdb;
+  cpu_p_to_mirrors(cpu);
+  slab_drop.pass=0;
 }
 
 /* Laser sensors ($43) test a body directly through $84:9C0E. A successful
@@ -1739,8 +1783,8 @@ static void object_hook(CpuState *cpu, uint32_t pc) {
  * The helper itself owns .2C (it tests, clears and stores the whole byte).
  * Highway's collapse after Bee Blader: the road (enemy $22) and the falling
  * slab (item $08, $82:E66B -> AB81) carry riders the same way. The slab's
- * one-frame carry state ($82:E62A) counts .2C up for the anchor before it
- * starts falling; that count is the anchor's native rider latch. Without a
+ * one-frame drop state ($82:E62A) latches .2C for a grounded world body
+ * before it starts falling; slab_drop_hook runs that for both seats. Without a
  * second-seat pass the partner fell through the slab and then stood inside
  * it on the lower road, unable to move. */
 static bool platform_item(unsigned d) {
@@ -2219,6 +2263,8 @@ void MmxCoopRegisterHooks(void) {
   interp_bridge_set_pre_opcode_hook(0x87af5c,kuwanger_lift_hook);
   interp_bridge_set_pre_opcode_hook(0x82c715,kuwanger_carry_hook);
   interp_bridge_set_pre_opcode_hook(0x82c733,kuwanger_carry_hook);
+  interp_bridge_set_pre_opcode_hook(0x82e64e,slab_drop_hook);
+  interp_bridge_set_pre_opcode_hook(0x82e666,slab_drop_hook);
   const unsigned turrets[]={0x87b91c,0x87b92f,0x87ba72,0x87ba5c,0x87bb09,0x87bb0d};
   for(unsigned i=0;i<sizeof(turrets)/sizeof(turrets[0]);++i)
     interp_bridge_set_pre_opcode_hook(turrets[i],laser_target_hook);

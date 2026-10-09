@@ -85,8 +85,12 @@ static void coop_collapse_checks(const char *assets, const char *path) {
   static CoopReplay r;
   coop_replay_load(path, &r);
   coop_replay_start(assets);
-  check(coop_replay_run(&r, 0, 3787) == UINT_MAX,
+  /* The recording predates the partner's pass through the slab's drop frame
+   * (slab_drop_hook), so it matches only up to the last checkpoint before
+   * the drop. */
+  check(coop_replay_run(&r, 0, 3751) == UINT_MAX,
         "replay follows the recorded session up to the falling slab");
+  for (unsigned t = 3751; t < 3787; ++t) coop_frames(1, r.p1[t], r.p2[t]);
   unsigned deepest = 0;
   for (unsigned t = 3787; t < 3870; ++t) {
     coop_frames(1, r.p1[t], r.p2[t]);
@@ -102,4 +106,33 @@ static void coop_collapse_checks(const char *assets, const char *path) {
   for (unsigned t = 3870; t < 3960; ++t) coop_frames(1, r.p1[t], r.p2[t]);
   check(coop_replay_x(1) + 16 < before, "P2 walks left after landing");
   puts("MMX CO-OP HIGHWAY COLLAPSE CHECKS PASSED");
+}
+
+/* Highway's slab drop (tests/data/coop_highway_slab_drop.replay): both seats
+ * stood on the road when it gave way at tick 4019. The slab's one-frame drop
+ * state ($82:E62A) moves a grounded world body down 2 px and latches it as a
+ * rider; only X ever got it, so P2 left the road a tick early, reached the
+ * slab five ticks ahead of X, and the same jump press landed on X's native
+ * landing frame (dropped) but not on P2's. slab_drop_hook runs the block for
+ * the partner too. */
+static void coop_slab_drop_checks(const char *assets, const char *path) {
+  static CoopReplay r;
+  coop_replay_load(path, &r);
+  coop_replay_start(assets);
+  check(coop_replay_run(&r, 0, 4019) == UINT_MAX,
+        "replay follows the recorded session up to the slab's drop");
+  unsigned y0[2] = {coop_replay_y(0), coop_replay_y(1)};
+  coop_frames(1, r.p1[4019], r.p2[4019]);
+  fprintf(stderr, "slab drop: X %u -> %u, P2 %u -> %u\n", y0[0], coop_replay_y(0), y0[1], coop_replay_y(1));
+  check(coop_replay_y(0) == y0[0] + 2 && coop_replay_y(1) == y0[1] + 2,
+        "the drop frame moves both grounded bodies down with the slab");
+  unsigned fell[2] = {0, 0};
+  for (unsigned t = 4020; t < 4040; ++t) {
+    coop_frames(1, r.p1[t], r.p2[t]);
+    for (unsigned seat = 0; seat < 2; ++seat)
+      if (!fell[seat] && coop_replay_body(seat)[2] == 0x08) fell[seat] = t;
+  }
+  fprintf(stderr, "slab drop: X falls at %u, P2 at %u\n", fell[0], fell[1]);
+  check(fell[0] && fell[0] == fell[1], "both seats leave the slab on the same tick");
+  puts("MMX CO-OP HIGHWAY SLAB DROP CHECKS PASSED");
 }
