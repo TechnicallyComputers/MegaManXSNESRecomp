@@ -1735,13 +1735,23 @@ static void object_hook(CpuState *cpu, uint32_t pc) {
  * behavior for a pass already in progress. */
 /* Items whose rider contact goes through $84:AB81/AB56: $0E/$0F/$10/$13/$14
  * use .2C as a boolean rider latch. (Storm Eagle's E-tank elevator, enemy
- * $59, does not call these helpers; see storm-eagle-collision-handoff.md.) */
+ * $59, does not call these helpers; see storm-eagle-collision-handoff.md.)
+ * The helper itself owns .2C (it tests, clears and stores the whole byte).
+ * Highway's collapse after Bee Blader: the road (enemy $22) and the falling
+ * slab (item $08, $82:E66B -> AB81) carry riders the same way. The slab's
+ * one-frame carry state ($82:E62A) counts .2C up for the anchor before it
+ * starts falling; that count is the anchor's native rider latch. Without a
+ * second-seat pass the partner fell through the slab and then stood inside
+ * it on the lower road, unable to move. */
 static bool platform_item(unsigned d) {
-  /* Kuwanger's little lift uses the same helpers from an enemy slot. */
-  if(d>=0xe68 && d<0x1228 && !((d-0xe68)%64)) return g_ram[d] && g_ram[d+10]==0x16;
+  if(d>=0xe68 && d<0x1228 && !((d-0xe68)%64)) {
+    /* Kuwanger's little lift and Highway's collapsing road. */
+    unsigned c=g_ram[d+10];
+    return g_ram[d] && (c==0x16 || c==0x22);
+  }
   if(d<0x1628 || d>=0x1928 || (d-0x1628)%48) return false;
   unsigned c=g_ram[d+10];
-  return (c>=0x0e && c<=0x10) || c==0x13 || c==0x14;
+  return c==0x08 || (c>=0x0e && c<=0x10) || c==0x13 || c==0x14;
 }
 /* Co-op keeps one rider bit per seat in .2C bits 0/1 and projects the current
  * seat's as bit 0 while the native helper runs. */

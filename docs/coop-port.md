@@ -386,6 +386,40 @@ saves reset the co-op context; normal public loading must still enforce the
 mod-set compatibility policy. State storage alone does not establish netplay
 compatibility.
 
+## Replaying a netplay log
+
+A netplay session's `logs/coop-netplay-*.csv` records the input both seats
+consumed on every tick from power-on. The simulation is deterministic, so
+those inputs reproduce the session headlessly:
+
+```bash
+python -I tools/coop_replay_from_csv.py logs/coop-netplay-<...>.csv bug.replay
+MMX_COOP_REPLAY=$PWD/bug.replay MMX_ZERO_TEST_ASSETS=<exe-dir>/cache/mmx-source/x3-zero-v7.bin \
+  build/mmx_state_tests <X1 ROM>
+```
+
+The replay checks both seats' positions against the log every 30 ticks and
+names the first divergence. It assumes P1 = X, X3 behavior and
+`Widescreen = 0`; the compositor flag and view width feed culling, so a
+session with other settings diverges early.
+
+`tests/data/coop_highway_collapse.replay` (inputs only) is the Highway
+collapse after Bee Blader. The road (enemy `$22`) and the falling slab (item
+`$08`) carry riders through `$84:AB81`, but only the world actor had a rider
+pass: P2 fell through the slab and stood inside it on the lower road, unable
+to move. Both now get a second-seat pass. `MMX_COOP_COLLAPSE_TEST=<replay>`
+checks the replay follows the recording to the slab, then that P2 lands on
+the road beside X and can walk.
+
+Other objects that reach `$84:AB81/AB56`, found by walking the generated call
+graph from each class's dispatch entry (items `$00:F320`, enemies `$F8DD`,
+enemy projectiles `$F77D`), still have no second-seat pass: items `$12`,
+enemies `$03` and `$23`, enemy projectile `$17` (none touch `.2C` outside the
+helper), and enemy `$2A`, which also keeps its own state in `.2C`. Enemy `$6B`
+and enemy projectile `$06` could not be separated from shared code, and item
+`$09` is absent from the generated code. These need a decision before they
+join `platform_item()`.
+
 ## Playtest coverage still needed
 
 The focused milestones above cover both roster orders, native/generated
