@@ -946,6 +946,9 @@ static struct {
 static struct {
   uint8_t pass,first,entry_2c,first_rode,p,db,rp,rdb;uint16_t d,s,a,x,y,ra,rx,ry;
 } slab_drop;
+static struct {
+  uint8_t pass,first,p,db,rp,rdb;uint16_t d,s,a,x,y,ra,rx,ry;
+} canister_side;
 static uint32_t lift_stack_ret(const CpuState *cpu) {
   return cpu->S<0x1ffd ? (uint32_t)(g_ram[cpu->S+1]|g_ram[cpu->S+2]<<8|g_ram[cpu->S+3]<<16) : 0;
 }
@@ -970,14 +973,16 @@ static bool lift_elevator(unsigned d) {
    * Storm Eagle's E-tank elevator top ($59) and its column ($5A, 83 px
    * below), Flame Mammoth's scrap blocks dropped onto the conveyor
    * ($2A, from $87:9C7B/9D89), Armored Armadillo's minecart ($2B), and
-   * Kuwanger's red moving platforms ($3F), and D-Rex's lower body ($62). */
+   * Kuwanger's red moving platforms ($3F), and D-Rex's lower body ($62).
+   * Also the canister ($4D, $87:CB30/CB46) that Chill Penguin's stage drops
+   * from a hovering carrier: without a pass Zero walked through it. */
   if(d<0xe68 || d>=0x1228 || (d-0xe68)%64 || !g_ram[d]) return false;
   unsigned c=g_ram[d+10];
-  return c==0x59 || c==0x5a || c==0x2a || c==0x2b || c==0x3f || c==0x62;
+  return c==0x59 || c==0x5a || c==0x2a || c==0x2b || c==0x3f || c==0x62 || c==0x4d;
 }
 static void laser_reset(void);
 static void lift_reset(void) {
-  lift.pass=0;lift.carry=0;cart.ready=false;cart.pass=0;elevator_move.pass=0;slab_drop.pass=0;laser_reset();
+  lift.pass=0;lift.carry=0;cart.ready=false;cart.pass=0;elevator_move.pass=0;slab_drop.pass=0;canister_side.pass=0;laser_reset();
 }
 static void lift_close(void) {
   if(lift.pass==2) MmxCoopSelect(g_ram,lift.first);
@@ -1102,6 +1107,40 @@ static void slab_drop_hook(CpuState *cpu,uint32_t pc) {
   cpu->A=slab_drop.ra;cpu->X=slab_drop.rx;cpu->Y=slab_drop.ry;cpu->P=slab_drop.rp;cpu->DB=slab_drop.rdb;
   cpu_p_to_mirrors(cpu);
   slab_drop.pass=0;
+}
+
+/* After each $82:D7D7 box, the canister ($4D) calls $84:9A02, which tests
+ * the world body ($0BA8) against the same box and sets its side-contact bits
+ * ($0BD4 bits 7/6). D7D7 already runs for both seats (lift_elevator); run
+ * this one for the partner's own body too, as native code. Nothing else
+ * calls $84:9A02. */
+static void canister_side_hook(CpuState *cpu,uint32_t pc) {
+  unsigned d=cpu->D;
+  if(!enabled || !state.initialized || state.menu_owner || state.scene_owner ||
+      d<0xe68 || d>=0x1228 || (d-0xe68)%64 || !g_ram[d] || g_ram[d+10]!=0x4d) return;
+  if((pc&65535)==0x9a02) {
+    if(canister_side.pass || state.players[state.current^1].status!=MMX_COOP_ALIVE ||
+        !(state.players[state.current^1].body[0x27]&127)) return;
+    cpu_mirrors_to_p(cpu);
+    canister_side.pass=1;canister_side.first=state.current;canister_side.d=(uint16_t)d;canister_side.s=cpu->S;
+    canister_side.a=cpu->A;canister_side.x=cpu->X;canister_side.y=cpu->Y;
+    canister_side.p=cpu->P;canister_side.db=cpu->DB;return;
+  }
+  /* $84:9A23 is the routine's only RTL; the stack check pairs it with this call. */
+  if(!canister_side.pass || canister_side.d!=d || canister_side.s!=cpu->S) return;
+  if(canister_side.pass==1) {
+    cpu_mirrors_to_p(cpu);
+    canister_side.ra=cpu->A;canister_side.rx=cpu->X;canister_side.ry=cpu->Y;
+    canister_side.rp=cpu->P;canister_side.rdb=cpu->DB;
+    MmxCoopSelect(g_ram,canister_side.first^1);canister_side.pass=2;
+    cpu->A=canister_side.a;cpu->X=canister_side.x;cpu->Y=canister_side.y;
+    cpu->P=canister_side.p;cpu->DB=canister_side.db;cpu_p_to_mirrors(cpu);
+    interp_bridge_pre_opcode_redirect(0x849a02);return;
+  }
+  MmxCoopSelect(g_ram,canister_side.first);
+  cpu->A=canister_side.ra;cpu->X=canister_side.rx;cpu->Y=canister_side.ry;
+  cpu->P=canister_side.rp;cpu->DB=canister_side.rdb;cpu_p_to_mirrors(cpu);
+  canister_side.pass=0;
 }
 
 /* Laser sensors ($43) test a body directly through $84:9C0E. A successful
@@ -2265,6 +2304,8 @@ void MmxCoopRegisterHooks(void) {
   interp_bridge_set_pre_opcode_hook(0x82c733,kuwanger_carry_hook);
   interp_bridge_set_pre_opcode_hook(0x82e64e,slab_drop_hook);
   interp_bridge_set_pre_opcode_hook(0x82e666,slab_drop_hook);
+  interp_bridge_set_pre_opcode_hook(0x849a02,canister_side_hook);
+  interp_bridge_set_pre_opcode_hook(0x849a23,canister_side_hook);
   const unsigned turrets[]={0x87b91c,0x87b92f,0x87ba72,0x87ba5c,0x87bb09,0x87bb0d};
   for(unsigned i=0;i<sizeof(turrets)/sizeof(turrets[0]);++i)
     interp_bridge_set_pre_opcode_hook(turrets[i],laser_target_hook);

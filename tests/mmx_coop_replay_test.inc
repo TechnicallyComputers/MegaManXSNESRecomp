@@ -136,3 +136,31 @@ static void coop_slab_drop_checks(const char *assets, const char *path) {
   check(fell[0] && fell[0] == fell[1], "both seats leave the slab on the same tick");
   puts("MMX CO-OP HIGHWAY SLAB DROP CHECKS PASSED");
 }
+
+/* Chill Penguin's canister ($4D), dropped by a hovering carrier, is solid
+ * through $82:D7D7 and sets side contact through $84:9A02, both on the world
+ * body only. From a private co-op checkpoint beside one (MMX_COOP_CANISTER_
+ * FIXTURE), each seat walks left into it and must stop where X does. */
+static void coop_canister_checks(const char *assets, const char *fixture) {
+  coop_replay_start(assets);
+  unsigned stop[2] = {0, 0};
+  for (unsigned seat = 0; seat < 2; ++seat) {
+    check(RtlLoadSnapshot(fixture), "canister fixture loads");
+    unsigned can = 0;
+    for (unsigned d = 0xe68; d < 0x1228; d += 64) if (g_ram[d] && g_ram[d+10] == 0x4d) can = d;
+    check(can != 0, "fixture contains a canister");
+    unsigned cx = g_ram[can+5] | g_ram[can+6] << 8;
+    check(coop_replay_x(seat) > cx, "the seat starts right of the canister");
+    stop[seat] = 99999;
+    for (unsigned t = 0; t < 120; ++t) {
+      coop_frames(1, seat == 0 ? SNES_PAD_LEFT : 0, seat == 1 ? SNES_PAD_LEFT : 0);
+      if (coop_replay_x(seat) < stop[seat]) stop[seat] = coop_replay_x(seat);
+    }
+    fprintf(stderr, "canister x%u: seat %u stops at x%u ($0BD4=%02x)\n", cx, seat, stop[seat],
+            coop_replay_body(seat)[0x2c]);
+    check(stop[seat] > cx, "walking left, the seat stops at the canister");
+    check((coop_replay_body(seat)[0x2c] & 0x82) == 0x82, "the canister sets its native side contact");
+  }
+  check(stop[0] == stop[1], "X and the partner stop at the same place");
+  puts("MMX CO-OP CANISTER CHECKS PASSED");
+}

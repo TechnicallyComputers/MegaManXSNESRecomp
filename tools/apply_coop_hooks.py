@@ -12,7 +12,9 @@ TARGETS = {0x01812e, 0x048fca, 0x0280b4, 0xd2bd, 0xd3dd, 0xd3fa, 0xd43a, 0xd457,
            0x079794, 0x07add8, 0x07af10, 0x07b91c, 0x07ba72, 0x07ba44, 0x07bb09, 0x02c715,
            0x07dabd, 0x08c333,
            # $82:E62A: Highway's falling slab, one-frame drop state; slab_drop_hook.
-           0x02e62a}
+           0x02e62a,
+           # $84:9A02: the canister's ($4D) side-contact test; canister_side_hook.
+           0x049a02}
 VIEW_TARGETS={0x00dc36,0x00dcdb,0x02806e,0x02808f,0x00d4aa}
 TARGETS |= VIEW_TARGETS
 # Routed through the interpreter when the generated code has them as entries,
