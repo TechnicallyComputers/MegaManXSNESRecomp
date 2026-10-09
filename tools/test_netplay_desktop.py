@@ -15,9 +15,15 @@ def main():
     parser.add_argument("--port", type=int, default=18010)
     parser.add_argument("--savestate-menu", action="store_true",
                         help="Exercise host save/load/cancel and guest authority checks")
+    parser.add_argument("--force-mismatch", action="store_true",
+                        help="With --savestate-menu: diverge the guest once so the "
+                             "host's state and slot must be sent to repair it")
+    parser.add_argument("--menu-hold-ms", type=int, default=0,
+                        help="With --savestate-menu: time to stay in each menu "
+                             "(default 1000); long holds prove a paused match stays connected")
     parser.add_argument("--delay-sync", action="store_true")
     args = parser.parse_args()
-    frames = 360 if args.savestate_menu else 180
+    frames = 480 if args.savestate_menu else 180
     for name in ("exe", "rom", "x3"):
         setattr(args, name, getattr(args, name).resolve(strict=True))
     root = args.output.resolve()
@@ -51,6 +57,11 @@ def main():
                 SDL_VIDEODRIVER="dummy")
             if args.savestate_menu:
                 env["SNES_NET_MENU_SELFTEST"] = "1"
+                env["SNES_NET_MENU_SELFTEST_SHOTS"] = str(peer)
+                if args.menu_hold_ms:
+                    env["SNES_NET_MENU_SELFTEST_HOLD_MS"] = str(args.menu_hold_ms)
+                if args.force_mismatch and seat == 1:
+                    env["SNES_NET_MENU_FORCE_MISMATCH"] = "1"
             if args.delay_sync:
                 env["SNES_NET_MODE"] = "delay"
             log = (peer / "desktop.log").open("wb")
@@ -58,9 +69,9 @@ def main():
                 cwd=peer, env=env, stdout=log, stderr=subprocess.STDOUT,
                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
             processes.append((proc, log, peer))
-        digests = []
+        digests, pauses, saves = [], [], []
         for proc, log, peer in processes:
-            result = proc.wait(timeout=40)
+            result = proc.wait(timeout=40 + 3 * args.menu_hold_ms // 1000)
             log.close()
             text = (peer / "desktop.log").read_text(errors="replace")
             assert result == 0, text[-4000:]
@@ -77,17 +88,55 @@ def main():
             if args.savestate_menu:
                 assert text.count("menu resumed serial=") == 3, text[-6000:]
                 assert "menu sync failed" not in text and "RB fork" not in text, text[-6000:]
+                # Every pause lands on one tick with one state on both peers.
+                pauses.append(re.findall(r"menu paused at tick (\d+) hash=([0-9a-f]{8})", text))
+                if args.force_mismatch:
+                    # The first pause and the first save diverge on the guest
+                    # and are repaired from the host; everything after matches.
+                    if peer.name == "peer0":
+                        assert text.count("peers MISMATCH - sending host state") == 1, text[-6000:]
+                        assert "every peer paused on host state" in text, text[-6000:]
+                        assert "save slot=11 verify peers MISMATCH - sending host slot" in text
+                    else:
+                        assert "menu applied host state at tick" in text, text[-6000:]
+                        assert "menu save slot=11 replaced by host copy" in text, text[-6000:]
+                else:
+                    assert "MISMATCH" not in text, text[-6000:]
                 if peer.name == "peer0":
                     assert all(f"action={action}" in text for action in ("save", "load", "cancel"))
-                    assert (peer / "saves/save11.sav").exists(), "Host did not save slot 12"
+                    assert len(re.findall(r"hash=[0-9a-f]{8} peers match", text)) == \
+                        (2 if args.force_mismatch else 3), text[-6000:]
+                    if not args.force_mismatch:
+                        assert "menu save slot=11 verify peers match" in text, text[-6000:]
+                    assert "menu load slot=11 applied on every peer" in text, text[-6000:]
+                    saves.append(peer / "saves/save11.sav")
                 else:
                     assert "guest actions refused" in text
+                    assert text.count("guest mirror open") == 3, text[-6000:]
+                    assert "menu save slot=11 written locally" in text, text[-6000:]
+                    assert "menu load slot=11 applied" in text, text[-6000:]
                     assert not list((peer / "saves").glob("*.sav")), "Guest wrote a personal save"
+                    saves.append(peer / "saves/netplay/save11.sav")
             print(f"{peer.name}: {frames} frames in {elapsed:.3f}s, no autosave")
         if not args.delay_sync:
             assert digests[0] == digests[1], f"Boot/resume states differ: {digests}"
             if args.savestate_menu:
-                assert len(digests[0]) == 4, f"Missing post-resume agreements: {digests}"
+                # Save and cancel resume in the same epoch; the load starts a
+                # new one, and so does a pause whose state had to be replaced.
+                expected = 3 if args.force_mismatch else 2
+                assert len(digests[0]) == expected, f"Unexpected epoch agreements: {digests}"
+        if args.savestate_menu:
+            assert len(pauses[0]) == 3 and len(pauses[1]) == 3, f"Missing pauses: {pauses}"
+            assert [t for t, _ in pauses[0]] == [t for t, _ in pauses[1]], f"Ticks differ: {pauses}"
+            first = 1 if args.force_mismatch else 0
+            assert pauses[0][first:] == pauses[1][first:], f"Pauses differ: {pauses}"
+            blobs = [path.read_bytes() for path in saves]
+            assert blobs[0] == blobs[1], "Peers hold different slot 12 states"
+            thumbs = [Path(str(path) + ".thumb") for path in saves]
+            assert all(t.exists() for t in thumbs), "Missing thumbnail"
+            if args.force_mismatch:
+                assert thumbs[0].read_bytes() == thumbs[1].read_bytes(), "Host thumbnail not sent"
+            print(f"pauses agreed {pauses[0]}; slot 12 identical on both peers ({len(blobs[0])} bytes)")
     finally:
         for proc, log, _ in processes:
             if proc.poll() is None:
