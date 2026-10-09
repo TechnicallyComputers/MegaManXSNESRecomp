@@ -26,9 +26,15 @@ def main():
                              "a later frame pauses with title audio playing")
     parser.add_argument("--audio", action="store_true",
                         help="Enable audio (SDL dummy driver), as players run it")
+    parser.add_argument("--frames", type=int, default=0, help="Override the frame budget")
+    parser.add_argument("--peer-env", action="append", default=[], metavar="SEAT:KEY=VALUE",
+                        help="Extra environment for one seat, e.g. 0:RNET_RB_FORCE_MISPREDICT=20 "
+                             "(engine validation knobs; repeatable)")
     parser.add_argument("--delay-sync", action="store_true")
     args = parser.parse_args()
     frames = (480 + max(0, args.menu_start - 60)) if args.savestate_menu else 180
+    if args.frames:
+        frames = args.frames
     for name in ("exe", "rom", "x3"):
         setattr(args, name, getattr(args, name).resolve(strict=True))
     root = args.output.resolve()
@@ -71,6 +77,11 @@ def main():
                     env["SNES_NET_MENU_FORCE_MISMATCH"] = "1"
             if args.delay_sync:
                 env["SNES_NET_MODE"] = "delay"
+            for item in args.peer_env:
+                where, _, kv = item.partition(":")
+                key, _, value = kv.partition("=")
+                if int(where) == seat:
+                    env[key] = value
             log = (peer / "desktop.log").open("wb")
             proc = subprocess.Popen([str(exe), "--no-launcher", "--rom", str(args.rom)],
                 cwd=peer, env=env, stdout=log, stderr=subprocess.STDOUT,
@@ -78,7 +89,7 @@ def main():
             processes.append((proc, log, peer))
         digests, pauses, saves = [], [], []
         for proc, log, peer in processes:
-            result = proc.wait(timeout=40 + 3 * args.menu_hold_ms // 1000)
+            result = proc.wait(timeout=40 + 3 * args.menu_hold_ms // 1000 + frames // 15)
             log.close()
             text = (peer / "desktop.log").read_text(errors="replace")
             assert result == 0, text[-4000:]
@@ -91,8 +102,14 @@ def main():
             timing = re.search(r"video totals: simulations=(\d+) presentations=\d+ seconds=([0-9.]+)", text)
             assert timing, text[-4000:]
             simulated, elapsed = int(timing.group(1)), float(timing.group(2))
-            assert simulated == frames or (frames - 10 <= simulated < frames and
+            # The budget counts replayed frames too, so under injected
+            # mispredicts the peer that rewinds less is far behind when the
+            # other's budget runs out.
+            slack = frames if any("FORCE_MISPREDICT" in e for e in args.peer_env) else 10
+            assert simulated == frames or (frames - slack <= simulated < frames and
                 "netplay barrier requested exit" in text), text[-4000:]
+            # A replay that disagrees with the timeline it replaced is a desync.
+            assert not re.search(r"RB (POST|BASELINE) FORK", text), text[-4000:]
             assert elapsed >= simulated / 60 - 0.1, f"Guest outran the SNES frame rate: {elapsed}s"
             assert not (peer / "saves/save0.sav").exists(), "Online match wrote an offline autosave"
             assert "match refused" not in text and "INPUT desync" not in text, text[-4000:]
