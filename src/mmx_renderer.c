@@ -86,6 +86,7 @@ static MmxRenderWorldSprite frame_world_sprites[MAX_WORLD_SPRITES];
 static unsigned frame_world_sprite_count;
 enum { MAX_DEBUG_RECTS = 64 };
 static MmxRendererDebugRectProvider debug_rect_provider;
+static MmxRendererDebugRectProvider hitbox_overlay_provider;
 static MmxRenderDebugRect frame_debug_rects[MAX_DEBUG_RECTS];
 static unsigned frame_debug_rect_count;
 static uint8_t door_cache[512 * 512];
@@ -176,6 +177,10 @@ unsigned MmxRendererWorldSpriteSnapshot(MmxRenderWorldSprite *out,
   if (out && count)
     memcpy(out, frame_world_sprites, count * sizeof(*out));
   return count;
+}
+void MmxRendererSetHitboxOverlayProvider(MmxRendererDebugRectProvider provider) {
+  hitbox_overlay_provider = provider;
+  if (!provider && !debug_rect_provider) frame_debug_rect_count = 0;
 }
 void MmxRendererSetDebugRectProvider(MmxRendererDebugRectProvider provider) {
   debug_rect_provider = provider;
@@ -409,8 +414,12 @@ void MmxRendererBeginFrame(const uint8_t ram[0x20000]) {
     memcpy(frame_world_sprites, world_sprites,
            world_sprite_count * sizeof(*frame_world_sprites));
   memset(debug_rects, 0, sizeof(debug_rects));
-  if (debug_rect_provider)
-    debug_rect_count = debug_rect_provider(debug_rects, MAX_DEBUG_RECTS);
+  /* The developer overlay outlines every object, a superset of any
+   * mod's own debug boxes, so it takes the frame when both are on. */
+  MmxRendererDebugRectProvider rects =
+      hitbox_overlay_provider ? hitbox_overlay_provider : debug_rect_provider;
+  if (rects)
+    debug_rect_count = rects(debug_rects, MAX_DEBUG_RECTS);
   if (debug_rect_count > MAX_DEBUG_RECTS)
     debug_rect_count = MAX_DEBUG_RECTS;
   frame_debug_rect_count = debug_rect_count;

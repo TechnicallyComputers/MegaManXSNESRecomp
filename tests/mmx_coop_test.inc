@@ -1,5 +1,6 @@
 #include "saber/mmx_saber_plugin.h"
 #include "saber/mmx_saber_tuning.h"
+#include "mmx_hitbox_overlay.h"
 /* Private ROM-backed controller/context checks. No owner save is overwritten. */
 #include "mmx_coop.h"
 static unsigned coop_x(const MmxCoopPlayer *p) { return p->body[5] | p->body[6] << 8; }
@@ -1047,6 +1048,26 @@ static void coop_launcher_checks(const char *root,const char *rom,const char *x3
       "launcher unticks and commits diagnostic checkbox");
   snes_mod_runtime_activate_plugins_c();
   check(!MmxCoopDiagnosticsEnabled(),"unticking flushes and disables co-op logger");
+  /* Developer hitbox overlay: presentation only, so a granted match leaves it
+   * out of the set peers compare; ungranted it is reported, never hidden. */
+  const char *overlay="megaman-x.developer.hitbox-overlay";
+  char set[4096],unapproved[1024];
+  check(p->feature_enable(p->ctx,overlay,"hitbox-overlay",1) && p->commit(p->ctx,rom),
+      "launcher ticks and commits the hitbox overlay");
+  snes_mod_runtime_activate_plugins_c();
+  check(MmxHitboxOverlayEnabled() && MmxCoopEnabled(),"hitbox overlay activates beside co-op");
+  snes_mod_runtime_set_cosmetic_allow_c(NULL);
+  check(snes_mod_runtime_unapproved_cosmetics_c(unapproved,sizeof(unapproved))>0 &&
+      strstr(unapproved,overlay),"an ungranted overlay is reported as unapproved");
+  snes_mod_runtime_set_cosmetic_allow_c("megaman-x.developer.hitbox-overlay@1.0.0");
+  check(snes_mod_runtime_effective_set_c(set,sizeof(set))<(int)sizeof(set) &&
+      !strstr(set,overlay) && strstr(set,"megaman-x.coop"),
+      "a granted overlay is left out of the netplay mod set");
+  snes_mod_runtime_set_cosmetic_allow_c(NULL);
+  check(p->feature_enable(p->ctx,overlay,"hitbox-overlay",0) && p->commit(p->ctx,rom),
+      "launcher unticks the hitbox overlay");
+  snes_mod_runtime_activate_plugins_c();
+  check(!MmxHitboxOverlayEnabled(),"unticking turns the hitbox overlay off");
   check(p->feature_enable(p->ctx,"megaman-x.coop","coop",0) && p->commit(p->ctx,rom),
       "launcher disables co-op");
   snes_mod_runtime_activate_plugins_c();

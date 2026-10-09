@@ -83,6 +83,8 @@ typedef unsigned (*MmxRendererDebugRectProvider)(MmxRenderDebugRect *out,
                                                  unsigned max);
 
 void MmxRendererSetDebugRectProvider(MmxRendererDebugRectProvider provider);
+/* The developer hitbox overlay; when set it replaces the provider above. */
+void MmxRendererSetHitboxOverlayProvider(MmxRendererDebugRectProvider provider);
 /* Copy the immutable snapshot captured by BeginFrame. */
 unsigned MmxRendererDebugRectSnapshot(MmxRenderDebugRect *out,
                                       unsigned max);

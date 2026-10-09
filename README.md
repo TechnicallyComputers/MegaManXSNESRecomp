@@ -166,6 +166,12 @@ numbered segments (`logs/coop-physics-<start time>-<pid>-<n>-001.csv`, `-002.csv
 the same mod also writes `logs/coop-netplay-*` segments with the same name stem;
 attach those too, from both players if possible. This extra tracing is off by default.
 
+To see collision boxes, tick **Hitbox overlay** under **Mods > Developer**. It
+outlines each object's native hitbox: enemies red, players green (both players in
+co-op), player shots yellow, Zero and Saber attacks cyan, enemy projectiles
+magenta. It only draws, works with or without widescreen, and does not change the
+game. Items and pickups are not outlined.
+
 <details>
 <summary>Building from source and technical details</summary>
 

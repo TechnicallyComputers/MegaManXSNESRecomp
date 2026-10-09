@@ -50,6 +50,7 @@ static void zero_capture(const char *base, const char *suffix) {
 #include "mmx_netplay_test.inc"
 #include "mmx_zero_modern_test.inc"
 #include "mmx_graphics_pacing_test.inc"
+#include "mmx_hitbox_overlay_test.inc"
 static void zero_motion_checks(const char *fixture) {
   const char *path = getenv("MMX_ZERO_MOTION_REFERENCE");
   if (!path) path = MMX_ZERO_MOTION_REFERENCE_DEFAULT;
@@ -1943,6 +1944,9 @@ int main(int argc, char **argv) {
   const char *zero_title = getenv("MMX_ZERO_TITLE_FIXTURE");
   if(getenv("MMX_COOP_VIEWS_BOOT_TEST")) {
     coop_view_boot_checks(zero_assets,start,expected,actual,cap);return 0;
+  }
+  if(getenv("MMX_HITBOX_OVERLAY_TEST")) {
+    hitbox_overlay_checks(zero_assets,start,expected,actual,cap);return 0;
   }
   if (getenv("MMX_GRAPHICS_PACING_TEST")) {
     graphics_pacing_checks(zero_assets, start, expected, actual, cap);

@@ -161,7 +161,8 @@ of cancelling it. Older saves load with Saber reset.
 ## Known limitations
 
 With **Show hitboxes** in co-op, the Zero box follows the live seat, which may
-be X. Saber Zero, Add Zero and Co-op remain the only features that use the
+be X. The **Developer → Hitbox overlay** mod outlines both seats and takes over
+from this option when both are on. Saber Zero, Add Zero and Co-op remain the only features that use the
 `megaman-x.zero` plugin key; Saber Zero settings uses none.
 
 The fuzz test has not been run. The only boss-death issue found in the current
