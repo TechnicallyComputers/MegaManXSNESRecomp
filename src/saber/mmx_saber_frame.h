@@ -8,6 +8,10 @@
 const MmxZeroExtension *MmxSaberFrameExtension(void);
 void MmxSaberFrameReset(void);
 
+/* Whether X1's handler for player action $0BAA can fire the buster. The
+ * Saber swings only where it can (hurt is handled separately). */
+bool MmxSaberFrameNativeFireAction(uint8_t action);
+
 /* The physical X/Y buttons of the seat being run. Single player reads the
  * native joypad words ($A7 held, $A9 previous, $AC newly pressed); co-op
  * supplies each seat's own pad, and Saber then tracks X's previous state. */

@@ -75,6 +75,23 @@ static MmxSaberFramePad sample_pad(const uint8_t *ram) {
   return pad;
 }
 
+/* X1 fires only from the player actions whose handler in the $81:82A6 table
+ * (indexed by $0BAA / 2) reaches the buster code at $81:94AF / $81:9D47:
+ * stand/walk/jump/fall/land $00-$0A, $10, wall $12, dash $14, $20, $28, $2A
+ * and $40. Everywhere else - Vile's electric restraint $32, Flame Mammoth's
+ * ground shock $36, item refills, scripted poses - X cannot shoot, so the
+ * Saber cannot swing. Hurt $0E keeps its own handling below. */
+bool MmxSaberFrameNativeFireAction(uint8_t action) {
+  return action <= 0x0a || action == 0x10 || action == 0x12 ||
+      action == 0x14 || action == 0x20 || action == 0x28 || action == 0x2a ||
+      action == 0x40;
+}
+
+static bool native_fire_locked(const uint8_t *ram) {
+  return ram && ram[0x0baa] != 0x0e && ram[0x0baa] != 0x0c &&
+      !MmxSaberFrameNativeFireAction(ram[0x0baa]);
+}
+
 static MmxSaberPhysicalPad read_physical_pad(const uint8_t *ram,
                                              MmxSaberFramePad pad) {
   const bool x_held = pad.x_held;
@@ -163,7 +180,7 @@ static void player_end(uint8_t *ram) {
     MmxSaberAttackExit(ram, MMX_SABER_ATTACK_EXIT_DEATH);
     return;
   }
-  if (ram[0xbaa] == 0x0e) {
+  if (ram[0xbaa] == 0x0e || native_fire_locked(ram)) {
     MmxSaberComboCancel(ram);
     MmxSaberAttackExit(ram, MMX_SABER_ATTACK_EXIT_HURT);
     return;
@@ -211,8 +228,11 @@ static void pre_player(uint8_t *ram) {
   saber = MmxSaberAttackPadState(release_pending);
   pre_native_saber = saber;
   MmxSaberAttackObservePreNative(ram);
+  /* A stun locks the Saber like a hit: no swing, no finisher, and the
+   * held buster charge is kept for the native state to resolve. */
+  const bool locked = native_fire_locked(ram);
   const bool finisher_claimed = MmxSaberComboPrePlayer(
-      ram, (physical.buttons & MMX_SABER_PAD_Y) != 0 &&
+      ram, !locked && (physical.buttons & MMX_SABER_PAD_Y) != 0 &&
           !(physical.prev_buttons & MMX_SABER_PAD_Y));
   /* A Saber-only frame must not create a buster charge. Once X is held, its
    * release edge, or an existing latch, the buster path remains available so
@@ -222,7 +242,7 @@ static void pre_player(uint8_t *ram) {
       (physical.prev_buttons & MMX_SABER_PAD_X) != 0 || release_pending;
   zero = (MmxSaberPadZero){
       (ram[0x0bdb] == 0) && x_charge_owned,
-      ram[0x0baa] == 0x0e,
+      ram[0x0baa] == 0x0e || locked,
       zero_dead_or_reset(ram),
       (ram[0x0bd3] & 4) || (ram[0x0bd4] & 4)};
 
