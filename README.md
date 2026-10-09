@@ -357,6 +357,15 @@ copy.
 
 </details>
 
+## Disassembly annotations
+
+[bogaa/dizProjects](https://github.com/bogaa/dizProjects) is pinned at
+`third_party/dizProjects`. Its X1 project supplies named gameplay routines,
+sprite/data tables and player RAM fields. The tracked [symbol metadata](symbols/README.md)
+names discovered code and adds searchable annotations during regeneration.
+Reviewed project names keep precedence. Search with
+`python tools/diz_annotations.py --query charge`.
+
 ## License
 
 PolyForm Noncommercial 1.0.0. See `LICENSE`. Code in this repo is
