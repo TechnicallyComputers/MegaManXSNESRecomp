@@ -480,9 +480,12 @@ void MmxCoopInitialize(uint8_t *r) {
   MmxWeaponsPartnerCombat(&partner->combat);
 }
 static void lift_close(void);
+static bool input_previous_valid[2]; /* see MmxCoopApplyInput */
+static uint16_t input_previous[2];
 bool MmxCoopFrameTick(uint8_t *r) {
   if (!enabled || !state.initialized) return MmxWeaponsFrameTick(r);
   lift_close(); /* an elevator query never spans a frame */
+  input_previous_valid[0] = input_previous_valid[1] = false;
   if (g_mmx_coop_trace) {MmxCoopTraceFrameBegin(&state);TRACE(FRAME,0,0,0,NULL);}
   /* The stage-clear weapon demonstration reuses the native player/shot
    * pools. It owns that single scripted actor; projecting either stored
@@ -600,6 +603,12 @@ void MmxCoopSeatButtons(bool *x_held, bool *y_pressed) {
   if (x_held) *x_held = live && (p->input & (1u << 9));
   if (y_pressed) *y_pressed = live && (p->pressed & (1u << 1));
 }
+/* A seat's previous actions, taken at its first MmxCoopApplyInput of the
+ * frame. Later calls in the same frame (pilot selection at frame start, then
+ * the $00:E57F mapper hook) must not read them back from the body snapshot:
+ * the first call already wrote this frame's actions there, which made every
+ * press read as held. Cleared by MmxCoopFrameTick, so it never spans a frame
+ * (rollback replays start at a frame boundary). */
 void MmxCoopApplyInput(uint8_t *r) {
   if (!enabled || !state.initialized || !r) return;
   unsigned input = state.players[state.current].input, native = 0;
@@ -615,7 +624,12 @@ void MmxCoopApplyInput(uint8_t *r) {
   }
   /* Native input mapping writes port 1 into the projected body. Seat 2 takes
    * its previous actions from its own preceding frame snapshot. */
-  unsigned previous = word(state.players[state.current].body+0x36);
+  unsigned seat = state.current & 1;
+  if (!input_previous_valid[seat]) {
+    input_previous[seat] = (uint16_t)word(state.players[state.current].body+0x36);
+    input_previous_valid[seat] = true;
+  }
+  unsigned previous = input_previous[seat];
   r[0xbe0] = (uint8_t)previous; r[0xbe1] = (uint8_t)(previous >> 8);
   r[0xbde] = (uint8_t)actions; r[0xbdf] = (uint8_t)(actions >> 8);
   r[0xbe2] = (uint8_t)(actions & ~previous); r[0xbe3] = (uint8_t)((actions & ~previous) >> 8);

@@ -195,3 +195,29 @@ static void coop_armor_checks(const char *assets, const char *fixture) {
   }
   puts("MMX CO-OP RIDE ARMOR BOARDING CHECKS PASSED");
 }
+
+/* The pilot's jump, dash and punch are edge-triggered: the armor ($83:8000)
+ * copies the pilot's pressed actions ($0BE2) every frame. With P2 piloting,
+ * pilot selection applied P2's input at frame start and the $00:E57F hook
+ * then read that frame's actions back as "previous", so nothing was ever
+ * pressed and only walking worked. From a private checkpoint with P2 already
+ * piloting (MMX_COOP_ARMOR_PILOT_FIXTURE), each action must take effect. */
+static void coop_armor_pilot_checks(const char *assets, const char *fixture) {
+  coop_replay_start(assets);
+  static const struct { const char *name; unsigned pad, armor_state; } moves[] = {
+    {"jump", SNES_PAD_B, 0x08}, {"dash", SNES_PAD_A, 0x0e}, {"punch", SNES_PAD_Y, 0x06}};
+  for (unsigned m = 0; m < 3; ++m) {
+    check(RtlLoadSnapshot(fixture), "armor pilot fixture loads");
+    MmxCoopState s = MmxCoopGetState();
+    check(s.anchor == 1 && coop_replay_body(1)[2] == 0x2c && (g_ram[0xe22] & 0x40),
+          "fixture has P2 piloting the Ride Armor");
+    bool seen = false;
+    for (unsigned t = 0; t < 20; ++t) {
+      coop_frames(1, 0, t < 8 ? moves[m].pad : 0);
+      seen |= g_ram[0xe1a] == moves[m].armor_state;
+    }
+    fprintf(stderr, "armor pilot: P2 %s %s\n", moves[m].name, seen ? "registers" : "is ignored");
+    check(seen, "P2's armor action registers");
+  }
+  puts("MMX CO-OP RIDE ARMOR PILOT CHECKS PASSED");
+}
