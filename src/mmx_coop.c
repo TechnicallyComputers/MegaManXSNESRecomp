@@ -949,6 +949,9 @@ static struct {
 static struct {
   uint8_t pass,first,p,db,rp,rdb;uint16_t d,s,a,x,y,ra,rx,ry;
 } canister_side;
+static struct {
+  uint8_t pass,first,p,db,rp,rdb;uint16_t s,a,x,y,ra,rx,ry;
+} armor_board;
 static uint32_t lift_stack_ret(const CpuState *cpu) {
   return cpu->S<0x1ffd ? (uint32_t)(g_ram[cpu->S+1]|g_ram[cpu->S+2]<<8|g_ram[cpu->S+3]<<16) : 0;
 }
@@ -982,7 +985,7 @@ static bool lift_elevator(unsigned d) {
 }
 static void laser_reset(void);
 static void lift_reset(void) {
-  lift.pass=0;lift.carry=0;cart.ready=false;cart.pass=0;elevator_move.pass=0;slab_drop.pass=0;canister_side.pass=0;laser_reset();
+  lift.pass=0;lift.carry=0;cart.ready=false;cart.pass=0;elevator_move.pass=0;slab_drop.pass=0;canister_side.pass=0;armor_board.pass=0;laser_reset();
 }
 static void lift_close(void) {
   if(lift.pass==2) MmxCoopSelect(g_ram,lift.first);
@@ -1141,6 +1144,50 @@ static void canister_side_hook(CpuState *cpu,uint32_t pc) {
   cpu->A=canister_side.ra;cpu->X=canister_side.rx;cpu->Y=canister_side.ry;
   cpu->P=canister_side.rp;cpu->DB=canister_side.rdb;cpu_p_to_mirrors(cpu);
   canister_side.pass=0;
+}
+
+/* An empty Ride Armor ($0E18) waiting on the ground boards whoever touches
+ * it: its idle state ($83:8129) tests the world body ($0BA8) through
+ * $84:9C0E at $814A and, on contact, runs the boarding sequence ($83:8605:
+ * pilot action $2C, armor .0A bit 6). Only X was ever tested, so Zero could
+ * not get in. When the first seat does not board, repeat the native test for
+ * the partner's own body; a partner who boards is then kept as the pilot
+ * like any other ($2C, see MmxCoopFrameTick). */
+static void armor_board_hook(CpuState *cpu,uint32_t pc) {
+  if(!enabled || !state.initialized || state.menu_owner || state.scene_owner ||
+      cpu->D!=0xe18 || !g_ram[0xe18]) return;
+  if((pc&65535)==0x814a) {
+    if(armor_board.pass || state.players[state.current^1].status!=MMX_COOP_ALIVE ||
+        !(state.players[state.current^1].body[0x27]&127)) return;
+    cpu_mirrors_to_p(cpu);
+    armor_board.pass=1;armor_board.first=state.current;armor_board.s=cpu->S;
+    armor_board.a=cpu->A;armor_board.x=cpu->X;armor_board.y=cpu->Y;
+    armor_board.p=cpu->P;armor_board.db=cpu->DB;return;
+  }
+  if(!armor_board.pass || armor_board.s!=cpu->S) return;
+  if(armor_board.pass==1 && !(g_ram[0xe22]&0x40)) {
+    cpu_mirrors_to_p(cpu);
+    armor_board.ra=cpu->A;armor_board.rx=cpu->X;armor_board.ry=cpu->Y;
+    armor_board.rp=cpu->P;armor_board.rdb=cpu->DB;
+    MmxCoopSelect(g_ram,armor_board.first^1);armor_board.pass=2;
+    cpu->A=armor_board.a;cpu->X=armor_board.x;cpu->Y=armor_board.y;
+    cpu->P=armor_board.p;cpu->DB=armor_board.db;cpu_p_to_mirrors(cpu);
+    interp_bridge_pre_opcode_redirect(0x83814a);return;
+  }
+  if(armor_board.pass==2) {
+    if(g_ram[0xe22]&0x40) {
+      /* The partner boarded: the rest of the armor's update moves its pilot
+       * (the world body), so the pilot becomes the anchor now, as the pilot
+       * selection in MmxCoopFrameTick would next frame, with its own input. */
+      state.anchor=state.current;
+      if(state.current==1) MmxCoopApplyInput(g_ram);
+    } else {
+      MmxCoopSelect(g_ram,armor_board.first);
+      cpu->A=armor_board.ra;cpu->X=armor_board.rx;cpu->Y=armor_board.ry;
+      cpu->P=armor_board.rp;cpu->DB=armor_board.rdb;cpu_p_to_mirrors(cpu);
+    }
+  }
+  armor_board.pass=0;
 }
 
 /* Laser sensors ($43) test a body directly through $84:9C0E. A successful
@@ -2306,6 +2353,8 @@ void MmxCoopRegisterHooks(void) {
   interp_bridge_set_pre_opcode_hook(0x82e666,slab_drop_hook);
   interp_bridge_set_pre_opcode_hook(0x849a02,canister_side_hook);
   interp_bridge_set_pre_opcode_hook(0x849a23,canister_side_hook);
+  interp_bridge_set_pre_opcode_hook(0x83814a,armor_board_hook);
+  interp_bridge_set_pre_opcode_hook(0x838187,armor_board_hook);
   const unsigned turrets[]={0x87b91c,0x87b92f,0x87ba72,0x87ba5c,0x87bb09,0x87bb0d};
   for(unsigned i=0;i<sizeof(turrets)/sizeof(turrets[0]);++i)
     interp_bridge_set_pre_opcode_hook(turrets[i],laser_target_hook);

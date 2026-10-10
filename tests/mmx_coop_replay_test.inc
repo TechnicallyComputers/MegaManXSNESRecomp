@@ -164,3 +164,34 @@ static void coop_canister_checks(const char *assets, const char *fixture) {
   check(stop[0] == stop[1], "X and the partner stop at the same place");
   puts("MMX CO-OP CANISTER CHECKS PASSED");
 }
+
+/* An empty Ride Armor boards whoever touches it, but its idle state
+ * ($83:8129) only tested the world body, so Zero as P2 could not get in.
+ * From a private co-op checkpoint left of one (MMX_COOP_ARMOR_FIXTURE), each
+ * seat in turn walks and jumps right into it while the other stands still. */
+static void coop_armor_checks(const char *assets, const char *fixture) {
+  coop_replay_start(assets);
+  for (unsigned seat = 0; seat < 2; ++seat) {
+    check(RtlLoadSnapshot(fixture), "armor fixture loads");
+    check(g_ram[0xe18] && !(g_ram[0xe22] & 0x40), "fixture has an empty Ride Armor");
+    unsigned other = coop_replay_x(seat ^ 1), boarded = 0;
+    for (unsigned t = 0; t < 150 && !boarded; ++t) {
+      unsigned in = SNES_PAD_RIGHT | ((t >= 40 && (t % 30) < 12) ? SNES_PAD_B : 0);
+      coop_frames(1, seat == 0 ? in : 0, seat == 1 ? in : 0);
+      if (g_ram[0xe22] & 0x40) boarded = t + 1;
+    }
+    coop_frames(1, 0, 0);
+    MmxCoopState s = MmxCoopGetState();
+    fprintf(stderr, "armor: seat %u boarded at %u, anchor %u, pilot action %02x, other x %u -> %u\n", seat,
+            boarded, s.anchor, coop_replay_body(seat)[2], other, coop_replay_x(seat ^ 1));
+    check(boarded && coop_replay_body(seat)[2] == 0x2c && s.anchor == seat,
+          "the seat that touches the armor boards it and pilots");
+    check(coop_replay_body(seat ^ 1)[2] != 0x2c && coop_replay_x(seat ^ 1) == other,
+          "the other seat is not boarded or moved");
+    for (unsigned t = 0; t < 30; ++t) coop_frames(1, 0, 0); /* boarding animation */
+    unsigned ax = g_ram[0xe1d] | g_ram[0xe1e] << 8;
+    for (unsigned t = 0; t < 40; ++t) coop_frames(1, seat == 0 ? SNES_PAD_RIGHT : 0, seat == 1 ? SNES_PAD_RIGHT : 0);
+    check((g_ram[0xe1d] | g_ram[0xe1e] << 8) > ax, "the pilot drives the armor");
+  }
+  puts("MMX CO-OP RIDE ARMOR BOARDING CHECKS PASSED");
+}
